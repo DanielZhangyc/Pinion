@@ -1,0 +1,6 @@
+{
+  "name": "Gryph Launcher",
+  "identifier": "dev.yuchenzhang.gryphlauncher",
+  "version": "0.1.0",
+  "out": "build"
+}
