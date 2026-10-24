@@ -1,6 +1,12 @@
 {
-  "name": "Gryph Launcher",
+  "name": "Pinion",
   "identifier": "dev.yuchenzhang.gryphlauncher",
   "version": "0.1.0",
-  "out": "build"
+  "icon": "resources/icon.png",
+  "out": "build",
+  "macos": {
+    "minimumSystemVersion": "15.0",
+    "icon": "assets/AppIcon.icon",
+    "signingIdentity": "Developer ID Application: Yuchen Zhang (KSNN3KB7YY)"
+  }
 }

@@ -1,0 +1,48 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : { "solid" : "srgb:0.94510,0.94118,0.93725,1.00000" }
+    },
+    {
+      "appearance" : "dark",
+      "value" : { "solid" : "srgb:0.09804,0.09804,0.09412,1.00000" }
+    }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : "automatic"
+            },
+            {
+              "appearance" : "dark",
+              "value" : { "solid" : "srgb:0.93333,0.93333,0.92549,1.00000" }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : { "solid" : "srgb:0.93333,0.93333,0.92549,1.00000" }
+            }
+          ],
+          "glass" : false,
+          "image-name" : "feathers.svg",
+          "name" : "Three feathers"
+        }
+      ],
+      "name" : "Pinion",
+      "specular" : false,
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

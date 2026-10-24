@@ -1,4 +1,6 @@
 /build/
+/.local/
+/resources/runtime/
 /.mygo/
 /.direnv/
 .DS_Store

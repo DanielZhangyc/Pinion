@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Pinion</title>
+  <desc id="desc">三片逐级收短的几何羽片，形成单翼轮廓。采用第一版 Pinion 图形的原始路径与比例。</desc>
+  <g fill="#181A1C">
+    <path d="M72 64H216L184 96H40Z"/>
+    <path d="M72 112H184L152 144H40Z"/>
+    <path d="M72 160H152L120 192H40Z"/>
+  </g>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Pinion</title>
+  <desc id="desc">近白色圆角底板上的三片深色几何羽片，保留第一版 Pinion 图形的原始路径与比例。</desc>
+  <rect x="100" y="100" width="824" height="824" rx="192" fill="#f1f0ef"/>
+  <g transform="translate(96 96) scale(3.25)" fill="#21201c">
+    <path d="M72 64H216L184 96H40Z"/>
+    <path d="M72 112H184L152 144H40Z"/>
+    <path d="M72 160H152L120 192H40Z"/>
+  </g>
+</svg>
