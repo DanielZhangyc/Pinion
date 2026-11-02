@@ -63,6 +63,7 @@ type App struct {
 	directoryBusy      bool
 	directoryError     string
 	downloads          map[string]DownloadState
+	gameUpdates        map[string]GameUpdateState
 	launches           map[string]LaunchState
 	onLaunch           func(string)
 	onOpenLaunchLog    func(string)
@@ -79,7 +80,7 @@ type App struct {
 }
 
 func New() *App {
-	return &App{page: endfield, compactWidth: collapsedSidebarWidth, mediaStatus: "正在检查官方素材…", downloads: make(map[string]DownloadState), launches: make(map[string]LaunchState), runtime: RuntimeState{Stage: "checking"}}
+	return &App{page: endfield, compactWidth: collapsedSidebarWidth, mediaStatus: "正在检查官方素材…", downloads: make(map[string]DownloadState), gameUpdates: make(map[string]GameUpdateState), launches: make(map[string]LaunchState), runtime: RuntimeState{Stage: "checking"}}
 }
 
 func (a *App) Presentation() Presentation {
@@ -304,6 +305,7 @@ func (a *App) game(c *ui.Context, title string, icon *ui.SVG) {
 				return
 			}
 			a.downloadButton(c)
+			a.launchPreviousVersion(c)
 			ui.Spacer(c)
 			if a.page == endfield && a.videoAvailable {
 				a.playback(c)

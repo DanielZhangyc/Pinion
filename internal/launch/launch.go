@@ -59,6 +59,40 @@ func StartEndfield(ctx context.Context, downloadRoot string, logReady func(strin
 	return Start(ctx, download.Endfield, downloadRoot, logReady)
 }
 
+// LockForUpdate excludes launches and other updates for this game across
+// processes. The caller must keep the returned file open throughout installing
+// and publishing the completed record, and close it on every exit path.
+// A fresh process scan after locking also detects games started outside Pinion.
+func LockForUpdate(game download.GameID) (*os.File, error) {
+	p, err := profile(game)
+	if err != nil {
+		return nil, err
+	}
+	return lockIdleGame(p)
+}
+
+func lockIdleGame(p gameProfile) (*os.File, error) {
+	layout, err := paths.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(layout.Data, 0700); err != nil {
+		return nil, err
+	}
+	lock, err := acquireLock(filepath.Join(layout.Data, string(p.id)+"-launch.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("%s：%w", p.title, err)
+	}
+	running, err := gamewatch.Running(p.executable)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("检查游戏进程：%w", err), lock.Close())
+	}
+	if running {
+		return nil, errors.Join(fmt.Errorf("%s：%w", p.title, ErrAlreadyRunning), lock.Close())
+	}
+	return lock, nil
+}
+
 // Start uses each game's completed installation record and private prefix.
 // Existing CrossOver bottles and game payloads are never copied or changed.
 func Start(ctx context.Context, game download.GameID, downloadRoot string, logReady func(string)) (_ *Session, resultErr error) {
@@ -71,25 +105,15 @@ func Start(ctx context.Context, game download.GameID, downloadRoot string, logRe
 		return nil, err
 	}
 	root := layout.Data
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, err
-	}
-	lock, err := acquireLock(filepath.Join(root, string(p.id)+"-launch.lock"))
+	lock, err := lockIdleGame(p)
 	if err != nil {
-		return nil, fmt.Errorf("%s：%w", p.title, err)
+		return nil, err
 	}
 	defer func() {
 		if resultErr != nil {
 			resultErr = errors.Join(resultErr, lock.Close())
 		}
 	}()
-	running, err := gamewatch.Running(p.executable)
-	if err != nil {
-		return nil, fmt.Errorf("检查游戏进程：%w", err)
-	}
-	if running {
-		return nil, fmt.Errorf("%s：%w", p.title, ErrAlreadyRunning)
-	}
 	if downloadRoot == "" {
 		return nil, errors.New("请先选择游戏下载目录。")
 	}

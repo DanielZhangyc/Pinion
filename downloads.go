@@ -10,6 +10,7 @@ import (
 
 	"pinion/internal/app"
 	"pinion/internal/download"
+	"pinion/internal/launch"
 	"pinion/internal/settings"
 
 	"github.com/egoist/mygo"
@@ -18,10 +19,15 @@ import (
 // These models are confined to the UI thread. Workers capture immutable job
 // inputs and publish their results with Window.Update.
 type downloadJob struct {
-	state   app.DownloadState
-	cancel  context.CancelFunc
-	token   uint64
-	started bool
+	state       app.DownloadState
+	cancel      context.CancelFunc
+	token       uint64
+	started     bool
+	installed   download.Record
+	checkCancel context.CancelFunc
+	checkedAt   time.Time
+	update      app.GameUpdateState
+	latest      *download.VersionInfo
 }
 
 type downloads struct {
@@ -32,6 +38,7 @@ type downloads struct {
 	directory  string
 	choosing   bool
 	generation uint64
+	nextToken  uint64
 	jobs       map[string]*downloadJob
 }
 
@@ -46,6 +53,7 @@ func startDownloads(window *mygo.Window, screen *app.App) error {
 	screen.OnChooseDirectory(d.chooseDirectory)
 	screen.OnDownload(d.act)
 	screen.OnOpenDownload(d.openDirectory)
+	window.OnFocus(func() { d.update(d.checkGameUpdates) })
 	screen.SetDownloadDirectory("", true, nil)
 	go func() {
 		prefs, err := d.store.Load()
@@ -59,6 +67,18 @@ func startDownloads(window *mygo.Window, screen *app.App) error {
 			d.setDirectory(prefs.DownloadDirectory)
 		})
 	}()
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				d.update(d.checkGameUpdates)
+			}
+		}
+	}()
 	return nil
 }
 
@@ -71,6 +91,11 @@ func (d *downloads) update(fn func()) {
 }
 
 func (d *downloads) setDirectory(directory string) {
+	for _, job := range d.jobs {
+		if job.checkCancel != nil {
+			job.checkCancel()
+		}
+	}
 	d.directory = directory
 	d.generation++
 	generation := d.generation
@@ -83,6 +108,7 @@ func (d *downloads) setDirectory(directory string) {
 		}
 		d.jobs[key] = job
 		d.screen.SetDownload(key, job.state)
+		d.screen.SetGameUpdate(key, app.GameUpdateState{})
 		if directory == "" {
 			continue
 		}
@@ -101,8 +127,12 @@ func (d *downloads) setDirectory(directory string) {
 					job.state = app.DownloadState{Stage: "failed", Error: fmt.Sprintf("无法读取下载记录：%v", err)}
 				} else {
 					job.state = app.DownloadState{Stage: "completed", Version: record.Version, Directory: record.Directory}
+					job.installed = record
 				}
 				d.screen.SetDownload(key, job.state)
+				if err == nil {
+					d.checkGameUpdate(key)
+				}
 			})
 		}()
 	}
@@ -160,26 +190,48 @@ func (d *downloads) act(game string) {
 		job.cancel()
 		return
 	}
+	updating := job.installed.Version != ""
+	if updating && d.screen.GameBusy(game) {
+		job.update.ActionError = "请先退出游戏，再安装更新。"
+		d.screen.SetGameUpdate(game, job.update)
+		return
+	}
+	if job.state.Stage == "completed" && (job.latest == nil || !job.latest.UpdateAvailable(job.installed)) {
+		return
+	}
 	for key, other := range d.jobs {
 		if key != game && other.cancel != nil {
-			job.state.Error = "另一款游戏正在下载，请先暂停后再试。"
-			d.screen.SetDownload(game, job.state)
+			message := "另一款游戏正在下载，请先暂停后再试。"
+			if job.state.Stage == "completed" {
+				job.update.ActionError = message
+				d.screen.SetGameUpdate(game, job.update)
+			} else {
+				job.state.Error = message
+				d.screen.SetDownload(game, job.state)
+			}
 			return
 		}
 	}
 	install := job.state.Stage == "ready" || job.started
+	job.update.ActionError = ""
 	job.started = install
 	directory := d.directory
 	ctx, cancel := context.WithCancel(d.ctx)
 	job.cancel = cancel
-	job.token++
+	if job.checkCancel != nil {
+		job.checkCancel()
+		job.checkCancel = nil
+	}
+	d.nextToken++
+	job.token = d.nextToken
 	token := job.token
 	job.state.Stage, job.state.Error, job.state.BytesPerSecond = "checking", "", 0
+	job.state.Updating = updating
 	d.screen.SetDownload(game, job.state)
-	go d.run(ctx, cancel, game, directory, token, install)
+	go d.run(ctx, cancel, game, directory, token, install, updating)
 }
 
-func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, directory string, token uint64, install bool) {
+func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, directory string, token uint64, install, updating bool) {
 	defer cancel()
 	if _, err := settings.ValidateDirectory(directory); err != nil {
 		d.finish(game, token, err, download.Record{})
@@ -201,10 +253,15 @@ func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, di
 			if job.state.Stage == "pausing" {
 				job.state.Stage = "paused"
 			} else {
-				job.state = app.DownloadState{Stage: "ready", Version: plan.Version, Directory: directory, TotalBytes: plan.DownloadBytes, RequiredBytes: plan.DownloadBytes + plan.UnpackedBytes}
+				job.state = app.DownloadState{Stage: "ready", Version: plan.Version, Directory: directory, TotalBytes: plan.DownloadBytes, RequiredBytes: plan.DownloadBytes + plan.UnpackedBytes, Updating: updating}
 			}
 			d.screen.SetDownload(game, job.state)
 		})
+		return
+	}
+	lock, err := launch.LockForUpdate(download.GameID(game))
+	if err != nil {
+		d.finish(game, token, fmt.Errorf("无法开始安装，请确认游戏已退出：%w", err), download.Record{})
 		return
 	}
 	var lastUpdate, speedStart time.Time
@@ -229,10 +286,10 @@ func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, di
 			return
 		}
 		lastUpdate, previousStage, previousFile = now, stage, progress.File
-		state := app.DownloadState{Stage: stage, Version: plan.Version, Directory: directory, File: progress.File, DoneBytes: progress.DoneBytes, TotalBytes: progress.TotalBytes, BytesPerSecond: max(0, speed)}
+		state := app.DownloadState{Stage: stage, Version: plan.Version, Directory: directory, File: progress.File, DoneBytes: progress.DoneBytes, TotalBytes: progress.TotalBytes, BytesPerSecond: max(0, speed), Updating: updating}
 		d.publishProgress(game, token, state)
 	})
-	d.finish(game, token, err, record)
+	d.finish(game, token, errors.Join(err, lock.Close()), record)
 }
 
 func (d *downloads) publishProgress(game string, token uint64, state app.DownloadState) {
@@ -273,9 +330,71 @@ func (d *downloads) finish(game string, token uint64, err error, record download
 			job.state.Stage, job.state.Error = "failed", err.Error()
 		default:
 			job.state = app.DownloadState{Stage: "completed", Version: record.Version, Directory: record.Directory}
+			job.installed = record
+			job.started = false
+			job.latest = nil
+			job.update = app.GameUpdateState{}
+			d.screen.SetGameUpdate(game, job.update)
 		}
 		d.screen.SetDownload(game, job.state)
+		if err == nil {
+			d.checkGameUpdate(game)
+		}
 	})
+}
+
+// Failures retry automatically; a successful check stays quiet for 30 minutes.
+func (d *downloads) checkGameUpdates() {
+	for game, job := range d.jobs {
+		interval := 30 * time.Minute
+		if job.update.Error != "" {
+			interval = time.Minute
+		}
+		if time.Since(job.checkedAt) >= interval {
+			d.checkGameUpdate(game)
+		}
+	}
+}
+
+func (d *downloads) checkGameUpdate(game string) {
+	job := d.jobs[game]
+	if d.ctx.Err() != nil || d.choosing || job == nil || job.state.Stage != "completed" || job.checkCancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(d.ctx)
+	job.checkCancel = cancel
+	job.checkedAt = time.Now()
+	installed := job.installed
+	token := job.token
+	if job.update.Stage != "available" {
+		job.update = app.GameUpdateState{Stage: "checking", InstalledVersion: installed.Version}
+	}
+	d.screen.SetGameUpdate(game, job.update)
+	go func() {
+		defer cancel()
+		latest, err := download.New("").LatestVersion(ctx, download.GameID(game))
+		d.update(func() {
+			if d.jobs[game] != job || job.token != token || job.state.Stage != "completed" || job.installed != installed {
+				return
+			}
+			job.checkCancel = nil
+			state := app.GameUpdateState{Stage: "current", InstalledVersion: installed.Version, LatestVersion: latest.Version}
+			if err != nil {
+				log.Printf("check game update %s: %v", game, err)
+				state.Stage, state.Error = "failed", err.Error()
+				if job.latest != nil && job.latest.UpdateAvailable(installed) {
+					state.Stage, state.LatestVersion = "available", job.latest.Version
+				}
+			} else if latest.UpdateAvailable(installed) {
+				state.Stage = "available"
+			}
+			if err == nil {
+				job.latest = &latest
+			}
+			job.update = state
+			d.screen.SetGameUpdate(game, state)
+		})
+	}()
 }
 
 func (d *downloads) openDirectory(game string) {

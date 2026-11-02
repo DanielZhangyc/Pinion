@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"pinion/internal/download"
 )
 
 // These filesystem checks use temporary directories and empty files. No game
@@ -99,6 +101,115 @@ func TestEndfieldMappingConflictsPreserved(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEndfieldMappingSwitchPreservesDirectories(t *testing.T) {
+	root, prefix, game := newEndfieldSetupDirectories(t)
+	old := filepath.Join(root, "previous-directory")
+	if err := os.Mkdir(old, 0700); err != nil {
+		t.Fatal(err)
+	}
+	mapped := filepath.Join(prefix, "drive_c", "GryphEndfield")
+	if err := os.Symlink(old, mapped); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.Lstat(mapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceEndfieldMapping(mapped, game, original); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkEndfieldMapping(prefix, game); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Fatalf("previous target was changed: %v", err)
+	}
+	current, err := os.Lstat(mapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(original, current) {
+		t.Fatal("mapping did not switch")
+	}
+	// An inode changed by another writer must survive a stale switch attempt.
+	if err := replaceEndfieldMapping(mapped, old, original); err == nil {
+		t.Fatal("stale mapping switch was accepted")
+	}
+	if err := checkEndfieldMapping(prefix, game); err != nil {
+		t.Fatal(err)
+	}
+	leftovers, err := filepath.Glob(filepath.Join(prefix, "drive_c", ".GryphEndfield-*"))
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("mapping staging paths remained: %v / %v", leftovers, err)
+	}
+}
+
+// Prepare actual installer-owned metadata directories from a live official
+// plan, canceling before any package download. No completion record, substitute
+// executable, or game package is manufactured, and Wine is never executed.
+func TestOwnedEndfieldDirectoryIntegration(t *testing.T) {
+	if os.Getenv("PINION_GAME_UPDATE_INTEGRATION") != "1" {
+		t.Skip("set PINION_GAME_UPDATE_INTEGRATION=1 for real official install metadata")
+	}
+	ctx, stop := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer stop()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := download.New(root)
+	plan, err := m.Resolve(ctx, download.Endfield)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	_, err = m.Install(installCtx, plan, func(progress download.Progress) {
+		if progress.Stage == download.StageDownloading {
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel before package download: %v", err)
+	}
+	if _, err := m.LoadRecord(download.Endfield); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("canceled preparation unexpectedly has a completion record: %v", err)
+	}
+	games, err := filepath.Glob(filepath.Join(root, "endfield", "versions", "*", "game"))
+	if err != nil || len(games) != 1 {
+		t.Fatalf("expected one installer-prepared version directory: %v / %v", games, err)
+	}
+	game := games[0]
+	want := filepath.Join(root, "endfield")
+	if got, err := ownedEndfieldDirectory(game); err != nil || got != want {
+		t.Fatalf("genuine installer-owned directory: %s / %v", got, err)
+	}
+	versionRoot := filepath.Dir(game)
+	suffixed := filepath.Join(filepath.Dir(versionRoot), plan.Version+"-"+plan.ManifestMD5)
+	if versionRoot != suffixed {
+		if err := os.Rename(versionRoot, suffixed); err != nil {
+			t.Fatal(err)
+		}
+		game = filepath.Join(suffixed, "game")
+	}
+	if got, err := ownedEndfieldDirectory(game); err != nil || got != want {
+		t.Fatalf("genuine manifest-addressed directory: %s / %v", got, err)
+	}
+	// Replacing an owned directory with a symlink must not confer ownership on
+	// the link target, even when the version's genuine manifest remains intact.
+	saved := game + "-saved"
+	if err := os.Rename(game, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(saved, game); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ownedEndfieldDirectory(game); err == nil {
+		t.Fatal("symlinked version game directory was accepted")
+	}
+	t.Logf("verified genuine owned layout and manifest-suffixed layout: version=%s manifest=%s; no package downloaded or installation completed", plan.Version, plan.ManifestMD5)
 }
 
 func TestOfficialLauncherURLBoundary(t *testing.T) {

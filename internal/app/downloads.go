@@ -11,6 +11,7 @@ type DownloadState struct {
 	Stage, Version, Directory, File, Error string
 	DoneBytes, TotalBytes, RequiredBytes   int64
 	BytesPerSecond                         float64
+	Updating                               bool
 }
 
 func (a *App) OnChooseDirectory(fn func())                  { a.onChooseDirectory = fn }
@@ -56,8 +57,24 @@ func (a *App) downloadDetails(c *ui.Context) {
 	case "failed":
 		status = "下载失败"
 	}
+	if s.Updating {
+		switch s.Stage {
+		case "downloading":
+			status = "正在下载更新"
+		case "extracting":
+			status = "正在安装更新"
+		case "verifying":
+			status = "正在校验更新"
+		case "paused":
+			status = "更新已暂停"
+		}
+	}
 	if s.Error != "" || s.Stage == "failed" {
-		failure := ui.Text(c, "下载失败").FontSize(fontBody).TextColor(t.Danger)
+		label := "下载失败"
+		if s.Updating {
+			label = "更新失败，当前版本已保留"
+		}
+		failure := ui.Text(c, label).FontSize(fontBody).TextColor(t.Danger)
 		tooltip(c, failure, s.Error)
 	} else if status != "" {
 		ui.Text(c, status).FontSize(fontBody)
@@ -98,8 +115,14 @@ func (a *App) downloadButton(c *ui.Context) {
 			label = "暂停"
 		case "ready":
 			label = "开始下载"
+			if s.Updating {
+				label = "开始更新"
+			}
 		case "paused":
 			label = "继续下载"
+			if s.Updating {
+				label = "继续更新"
+			}
 		case "pausing":
 			label, disabled = "正在暂停", true
 		case "failed":
@@ -107,6 +130,9 @@ func (a *App) downloadButton(c *ui.Context) {
 		case "completed":
 			label, disabled = "打开目录", a.onOpenDownload == nil
 		}
+	}
+	if s.Updating && a.GameBusy(game) {
+		label, disabled = "游戏运行中", true
 	}
 	button := ui.ButtonBase(c.Key("download-action")).Height(40).Padding(0, 16).
 		Label(label).Disabled(disabled).OnClick(func() {

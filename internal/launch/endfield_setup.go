@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"pinion/internal/download"
 )
 
 const officialLauncherAPI = "https://launcher.hypergryph.com/api/proxy/batch_proxy"
@@ -104,8 +106,134 @@ func prepareEndfieldMapping(prefix, directory string) error {
 	} else if err != nil {
 		return err
 	}
-	// Preserve dangling links and user directories instead of replacing them.
-	return checkEndfieldMapping(prefix, directory)
+	if err := checkEndfieldMapping(prefix, directory); err == nil {
+		return nil
+	}
+	// Only explicit Start calls reach here, while holding the game's launch
+	// lock after a fresh process scan. Never adopt arbitrary user paths.
+	info, err := os.Lstat(mapped)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return errors.New("保留已有终末地映射路径：不是 Pinion 游戏目录符号链接")
+	}
+	old, err := os.Readlink(mapped)
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(old) {
+		old = filepath.Join(drive, old)
+	}
+	oldRoot, err := ownedEndfieldDirectory(filepath.Clean(old))
+	if err != nil {
+		return fmt.Errorf("保留已有终末地游戏映射：%w", err)
+	}
+	newRoot, err := ownedEndfieldDirectory(directory)
+	if err != nil {
+		return fmt.Errorf("终末地新安装目录归属校验失败：%w", err)
+	}
+	if oldRoot != newRoot {
+		return errors.New("保留已有终末地游戏映射：新旧安装不属于同一 Pinion 下载目录")
+	}
+	record, err := download.New(filepath.Dir(newRoot)).LoadRecord(download.Endfield)
+	if err != nil {
+		return fmt.Errorf("读取终末地新安装记录：%w", err)
+	}
+	if record.Directory != directory {
+		return errors.New("终末地新映射目标与已完成安装记录不一致")
+	}
+	return replaceEndfieldMapping(mapped, directory, info)
+}
+
+// Recognize both legacy version directories and manifest-addressed hot updates.
+// Marker contents alone are insufficient: every directory must be real, and the
+// version name must agree with its adjacent manifest identity when suffixed.
+func ownedEndfieldDirectory(directory string) (string, error) {
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || filepath.Base(directory) != "game" {
+		return "", errors.New("不是 Pinion 终末地版本目录")
+	}
+	versionRoot := filepath.Dir(directory)
+	versions := filepath.Dir(versionRoot)
+	root := filepath.Dir(versions)
+	if filepath.Base(versions) != "versions" || filepath.Base(root) != string(download.Endfield) {
+		return "", errors.New("不是 Pinion 终末地下载目录")
+	}
+	for _, name := range []string{root, versions, versionRoot, directory} {
+		info, err := os.Lstat(name)
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("终末地版本路径不是普通目录：%s", name)
+		}
+	}
+	real, err := filepath.EvalSymlinks(root)
+	if err != nil || real != root {
+		return "", errors.New("终末地下载目录包含符号链接或无法解析")
+	}
+	readIdentity := func(name string) (string, error) {
+		info, err := os.Lstat(name)
+		if err != nil {
+			return "", err
+		}
+		if !info.Mode().IsRegular() || info.Size() > 128 {
+			return "", fmt.Errorf("终末地归属标志不是有效普通文件：%s", name)
+		}
+		data, err := os.ReadFile(name)
+		return string(data), err
+	}
+	marker, err := readIdentity(filepath.Join(root, ".gryph-download.json"))
+	if err != nil {
+		return "", err
+	}
+	if marker != "gryph-launcher:endfield\n" {
+		return "", errors.New("终末地下载目录归属标志不匹配")
+	}
+	identity, err := readIdentity(filepath.Join(versionRoot, "manifest.md5"))
+	if err != nil {
+		return "", err
+	}
+	digest := strings.TrimSuffix(identity, "\n")
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != md5.Size || identity != digest+"\n" {
+		return "", errors.New("终末地版本 manifest 身份无效")
+	}
+	name := filepath.Base(versionRoot)
+	version, suffix, suffixed := strings.Cut(name, "-")
+	if version == "" || strings.Trim(version, "0123456789.") != "" || strings.Contains(version, "..") || version[0] == '.' || version[len(version)-1] == '.' ||
+		(suffixed && suffix != digest) {
+		return "", errors.New("终末地版本目录名称与 manifest 身份不匹配")
+	}
+	return root, nil
+}
+
+func replaceEndfieldMapping(mapped, directory string, original os.FileInfo) (resultErr error) {
+	staging, err := os.MkdirTemp(filepath.Dir(mapped), ".GryphEndfield-")
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, os.Remove(staging)) }()
+	temporary := filepath.Join(staging, "link")
+	if err := os.Symlink(directory, temporary); err != nil {
+		return err
+	}
+	defer func() {
+		if err := os.Remove(temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, err)
+		}
+	}()
+	current, err := os.Lstat(mapped)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(original, current) {
+		return errors.New("终末地游戏映射已改变，保留当前路径")
+	}
+	if err := os.Rename(temporary, mapped); err != nil {
+		return fmt.Errorf("切换终末地游戏映射：%w", err)
+	}
+	return nil
 }
 
 func checkOfficialLauncherURL(raw string) error {

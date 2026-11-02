@@ -169,10 +169,9 @@ func readBounded(resp *http.Response, limit int64) ([]byte, error) {
 	return b, nil
 }
 
-// Resolve refreshes signed URLs and validates the encrypted file manifest and
-// ZIP64 directory. Only bounded metadata ranges are read, never whole packages.
-func (m *Manager) Resolve(ctx context.Context, game GameID) (Plan, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+// latestPackage reads official version metadata without fetching game files.
+func (m *Manager) latestPackage(ctx context.Context, game GameID) (Plan, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	plan := Plan{Game: game}
 	code, err := appcode(game)
@@ -233,11 +232,23 @@ func (m *Manager) Resolve(ctx context.Context, game GameID) (Plan, error) {
 	if err := plan.validate(false); err != nil {
 		return plan, err
 	}
-	resp, err = m.request(ctx, http.MethodGet, plan.ManifestURL, nil)
+	return plan, nil
+}
+
+// Resolve refreshes signed URLs and validates the encrypted file manifest and
+// ZIP64 directory. Only bounded metadata ranges are read, never whole packages.
+func (m *Manager) Resolve(ctx context.Context, game GameID) (Plan, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	plan, err := m.latestPackage(ctx, game)
 	if err != nil {
 		return plan, err
 	}
-	data, err = readBounded(resp, metadataLimit)
+	resp, err := m.request(ctx, http.MethodGet, plan.ManifestURL, nil)
+	if err != nil {
+		return plan, err
+	}
+	data, err := readBounded(resp, metadataLimit)
 	if err != nil {
 		return plan, err
 	}
@@ -507,6 +518,11 @@ func (m *Manager) LoadRecord(game GameID) (Record, error) {
 		return record, err
 	}
 	defer gr.Close()
+	return loadRecord(gr, game)
+}
+
+func loadRecord(gr *os.Root, game GameID) (Record, error) {
+	var record Record
 	if err := regular(gr, "completed.json"); err != nil {
 		return record, err
 	}
@@ -520,16 +536,25 @@ func (m *Manager) LoadRecord(game GameID) (Record, error) {
 	if record.Game != game || !validVersion(record.Version) || !validMD5(record.ManifestMD5) || record.CompletedAt.IsZero() {
 		return record, errors.New("invalid completion record")
 	}
-	expected := filepath.Join(gr.Name(), "versions", record.Version, "game")
-	if record.Directory != expected {
+	base := path.Join("versions", record.Version)
+	if record.Directory != filepath.Join(gr.Name(), base, "game") {
+		base += "-" + record.ManifestMD5
+	}
+	if record.Directory != filepath.Join(gr.Name(), base, "game") {
 		return record, errors.New("completion directory mismatch")
 	}
-	info, err := gr.Lstat(path.Join("versions", record.Version, "game"))
+	if err := checkDirs(gr, path.Join(base, "game")); err != nil {
+		return record, err
+	}
+	if err := regular(gr, path.Join(base, "manifest.md5")); err != nil {
+		return record, err
+	}
+	identity, err := gr.ReadFile(path.Join(base, "manifest.md5"))
 	if err != nil {
 		return record, err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return record, errors.New("completed game directory is missing")
+	if !bytes.Equal(identity, []byte(record.ManifestMD5+"\n")) {
+		return record, errors.New("completion manifest mismatch")
 	}
 	return record, nil
 }
@@ -569,42 +594,47 @@ func (m *Manager) Install(ctx context.Context, plan Plan, report func(Progress))
 		return record, fmt.Errorf("another installation is active: %w", err)
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	base := path.Join("versions", plan.Version)
-	if err := makeDirs(gr, base); err != nil {
-		return record, err
+	installed, err := loadRecord(gr, plan.Game)
+	if err != nil {
+		// Missing game files or metadata in a recorded installation are damage,
+		// not permission to overwrite the directory referenced by that record.
+		if _, statErr := gr.Lstat("completed.json"); !errors.Is(statErr, os.ErrNotExist) {
+			return record, err
+		}
 	}
-	// A stable content identity permits refreshed signed URLs, but never reuses
-	// a version directory after the publisher changed that version's manifest.
-	identity := []byte(plan.ManifestMD5 + "\n")
-	if err := regular(gr, path.Join(base, "manifest.md5")); err != nil {
-		return record, err
+	if err == nil && installed.Version == plan.Version && installed.ManifestMD5 == plan.ManifestMD5 {
+		// Never repair in place while completed.json points at this directory.
+		// An already-installed identity must still pass the full manifest check.
+		if err := verifyPlan(ctx, gr, plan, recordBase(installed), emit); err != nil {
+			return record, err
+		}
+		emit(StageCompleted, "", plan.DownloadBytes, plan.DownloadBytes)
+		return installed, nil
 	}
-	old, err := gr.ReadFile(path.Join(base, "manifest.md5"))
-	if err == nil && !bytes.Equal(old, identity) {
-		return record, errors.New("version manifest changed; select a new download root")
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return record, err
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		versionRoot, err := gr.Open(base)
+	if err == nil {
+		// Remember that this directory was completed before moving the current
+		// pointer. A future publisher rollback must not repair it in place.
+		data, err := json.MarshalIndent(installed, "", "  ")
 		if err != nil {
 			return record, err
 		}
-		children, readErr := versionRoot.Readdirnames(1)
-		closeErr := versionRoot.Close()
-		if readErr != nil && readErr != io.EOF {
-			return record, readErr
-		}
-		if closeErr != nil {
-			return record, closeErr
-		}
-		if len(children) != 0 {
-			return record, errors.New("refusing to overwrite an unrecorded version directory")
+		if err := atomicWrite(gr, path.Join(recordBase(installed), "completed.json"), data); err != nil {
+			return record, err
 		}
 	}
-	if err := atomicWrite(gr, path.Join(base, "manifest.md5"), identity); err != nil {
+	base, err := prepareVersion(gr, plan)
+	if err != nil {
 		return record, err
+	}
+	completed, err := versionCompleted(gr, base, plan)
+	if err != nil {
+		return record, err
+	}
+	if completed {
+		if err := verifyPlan(ctx, gr, plan, base, emit); err != nil {
+			return record, err
+		}
+		return commitRecord(gr, plan, base, emit)
 	}
 	for _, dir := range []string{"cache", "game", "staging"} {
 		if err := makeDirs(gr, path.Join(base, dir)); err != nil {
@@ -650,9 +680,6 @@ func (m *Manager) Install(ctx context.Context, plan Plan, report func(Progress))
 	if unpacked != plan.UnpackedBytes {
 		return record, errors.New("ZIP expanded size changed")
 	}
-	if err := gr.Remove("completed.json"); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return record, err
-	}
 	var extracted int64
 	emit(StageExtracting, "", 0, unpacked)
 	for i, f := range zr.File {
@@ -687,31 +714,127 @@ func (m *Manager) Install(ctx context.Context, plan Plan, report func(Progress))
 	if err := local.Close(); err != nil {
 		return record, err
 	}
+	if err := verifyPlan(ctx, gr, plan, base, emit); err != nil {
+		return record, err
+	}
+	if err := ctx.Err(); err != nil {
+		return record, err
+	}
+	return commitRecord(gr, plan, base, emit)
+}
+
+func recordBase(record Record) string {
+	return path.Join("versions", filepath.Base(filepath.Dir(record.Directory)))
+}
+
+func commitRecord(root *os.Root, plan Plan, base string, emit func(string, string, int64, int64)) (Record, error) {
+	record := Record{plan.Game, plan.Version, filepath.Join(root.Name(), base, "game"), time.Now().UTC(), plan.ManifestMD5}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return record, err
+	}
+	if err := atomicWrite(root, path.Join(base, "completed.json"), data); err != nil {
+		return record, err
+	}
+	if err := atomicWrite(root, "completed.json", data); err != nil {
+		return record, err
+	}
+	emit(StageCompleted, "", plan.DownloadBytes, plan.DownloadBytes)
+	return record, nil
+}
+
+func versionCompleted(root *os.Root, base string, plan Plan) (bool, error) {
+	name := path.Join(base, "completed.json")
+	if err := regular(root, name); err != nil {
+		return false, err
+	}
+	data, err := root.ReadFile(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var record Record
+	if err := json.Unmarshal(data, &record); err != nil {
+		return false, err
+	}
+	if record.Game != plan.Game || record.Version != plan.Version || record.ManifestMD5 != plan.ManifestMD5 ||
+		record.CompletedAt.IsZero() || record.Directory != filepath.Join(root.Name(), base, "game") {
+		return false, errors.New("version completion record mismatch")
+	}
+	return true, nil
+}
+
+func verifyPlan(ctx context.Context, root *os.Root, plan Plan, base string, emit func(string, string, int64, int64)) error {
 	var verified, total int64
 	for _, f := range plan.Files {
 		total += f.Size
 	}
 	emit(StageVerifying, "", 0, total)
 	for _, f := range plan.Files {
-		if err := verifyFile(ctx, gr, path.Join(base, "game", f.Path), f.Size, f.MD5); err != nil {
-			return record, err
+		if err := verifyFile(ctx, root, path.Join(base, "game", f.Path), f.Size, f.MD5); err != nil {
+			return err
 		}
 		verified += f.Size
 		emit(StageVerifying, f.Path, verified, total)
 	}
-	if err := ctx.Err(); err != nil {
-		return record, err
+	return ctx.Err()
+}
+
+// Keep the original version path for existing downloads; publisher changes to
+// that version get their own manifest-qualified directory, never the old files.
+func prepareVersion(root *os.Root, plan Plan) (string, error) {
+	base := path.Join("versions", plan.Version)
+	identity := []byte(plan.ManifestMD5 + "\n")
+	if err := checkDirs(root, base); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
-	record = Record{plan.Game, plan.Version, filepath.Join(gr.Name(), base, "game"), time.Now().UTC(), plan.ManifestMD5}
-	data, err := json.MarshalIndent(record, "", "  ")
+	if err := regular(root, path.Join(base, "manifest.md5")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	old, err := root.ReadFile(path.Join(base, "manifest.md5"))
+	if err == nil && !bytes.Equal(old, identity) {
+		base += "-" + plan.ManifestMD5
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := makeDirs(root, base); err != nil {
+		return "", err
+	}
+	marker := path.Join(base, "manifest.md5")
+	if err := regular(root, marker); err != nil {
+		return "", err
+	}
+	old, err = root.ReadFile(marker)
+	if err == nil {
+		if !bytes.Equal(old, identity) {
+			return "", errors.New("version directory manifest mismatch")
+		}
+		return base, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	dir, err := root.Open(base)
 	if err != nil {
-		return record, err
+		return "", err
 	}
-	if err := atomicWrite(gr, "completed.json", data); err != nil {
-		return record, err
+	children, readErr := dir.Readdirnames(1)
+	closeErr := dir.Close()
+	if readErr != nil && readErr != io.EOF {
+		return "", readErr
 	}
-	emit(StageCompleted, "", plan.DownloadBytes, plan.DownloadBytes)
-	return record, nil
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if len(children) != 0 {
+		return "", errors.New("refusing to overwrite an unrecorded version directory")
+	}
+	if err := atomicWrite(root, marker, identity); err != nil {
+		return "", err
+	}
+	return base, nil
 }
 
 func packName(base string, i int) string {

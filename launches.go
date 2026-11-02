@@ -79,7 +79,7 @@ func launchTitle(game string) string {
 
 func (l *launches) start(game string) {
 	g, ok := l.games[game]
-	if !ok || g.active || g.state.Stage == "running" || !l.screen.RuntimeReady() {
+	if !ok || g.active || g.state.Stage == "running" || !l.screen.RuntimeReady() || !l.screen.GameLaunchable(game) {
 		return
 	}
 	g.active = true
