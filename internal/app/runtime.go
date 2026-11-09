@@ -13,9 +13,11 @@ type RuntimeState struct {
 }
 
 func (a *App) SetRuntime(state RuntimeState) { a.runtime = state }
-func (a *App) RuntimeReady() bool            { return a.runtime.Stage == "ready" }
-func (a *App) OnRuntimeAction(fn func())     { a.onRuntimeAction = fn }
-func (a *App) OnInstallRosetta(fn func())    { a.onInstallRosetta = fn }
+func (a *App) RuntimeReady() bool {
+	return a.runtime.Stage == "ready" && a.runtimeRepair.Stage != "repairing"
+}
+func (a *App) OnRuntimeAction(fn func())  { a.onRuntimeAction = fn }
+func (a *App) OnInstallRosetta(fn func()) { a.onInstallRosetta = fn }
 
 func (s RuntimeState) busy() bool {
 	switch s.Stage {

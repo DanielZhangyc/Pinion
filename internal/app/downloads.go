@@ -12,10 +12,12 @@ type DownloadState struct {
 	DoneBytes, TotalBytes, RequiredBytes   int64
 	BytesPerSecond                         float64
 	Updating                               bool
+	Differential                           bool
 }
 
 func (a *App) OnChooseDirectory(fn func())                  { a.onChooseDirectory = fn }
 func (a *App) OnDownload(fn func(string))                   { a.onDownload = fn }
+func (a *App) OnFullUpdate(fn func(string))                 { a.onFullUpdate = fn }
 func (a *App) OnOpenDownload(fn func(string))               { a.onOpenDownload = fn }
 func (a *App) SetDownload(game string, state DownloadState) { a.downloads[game] = state }
 
@@ -63,6 +65,9 @@ func (a *App) downloadDetails(c *ui.Context) {
 			status = "正在下载更新"
 		case "extracting":
 			status = "正在安装更新"
+			if s.Differential {
+				status = "正在应用差分更新"
+			}
 		case "verifying":
 			status = "正在校验更新"
 		case "paused":
@@ -81,6 +86,13 @@ func (a *App) downloadDetails(c *ui.Context) {
 	}
 	switch s.Stage {
 	case "ready":
+		if s.Updating {
+			mode := "完整更新"
+			if s.Differential {
+				mode = "差分更新"
+			}
+			ui.Text(c, mode).FontSize(fontSmall).TextColor(t.TextMuted)
+		}
 		ui.Row(c).FillWidth().Gap(16).Children(func() {
 			ui.Text(c, "下载 "+formatBytes(s.TotalBytes)).FontSize(fontSmall).TextColor(t.TextMuted)
 			ui.Text(c, "所需空间 "+formatBytes(s.RequiredBytes)).FontSize(fontSmall).TextColor(t.TextMuted)
@@ -146,6 +158,19 @@ func (a *App) downloadButton(c *ui.Context) {
 	})
 	a.buttonFeedback(button, c.Theme(), false, true)
 	button.Children(func() { ui.Text(c, label).FontSize(fontBody) })
+}
+
+func (a *App) fullUpdateButton(c *ui.Context) {
+	game := a.selectedGame()
+	s := a.downloads[game]
+	if !s.Updating || !s.Differential || (s.Stage != "ready" && s.Stage != "failed") {
+		return
+	}
+	button := ui.ButtonBase(c.Key("full-game-update")).Height(40).Padding(0, 12).
+		Label("改用完整更新").Disabled(a.onFullUpdate == nil || a.directoryBusy || a.GameBusy(game)).
+		OnClick(func() { a.onFullUpdate(game) })
+	a.buttonFeedback(button, c.Theme(), false, false)
+	button.Children(func() { ui.Text(c, "改用完整更新").FontSize(fontBody) })
 }
 
 func formatBytes(n int64) string {

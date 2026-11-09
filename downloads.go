@@ -28,6 +28,15 @@ type downloadJob struct {
 	checkedAt   time.Time
 	update      app.GameUpdateState
 	latest      *download.VersionInfo
+	offer       downloadOffer
+	forceFull   bool
+}
+
+// Signed URLs may refresh while the download choice and its cost stay fixed.
+type downloadOffer struct {
+	version, manifest  string
+	differential       bool
+	download, required int64
 }
 
 type downloads struct {
@@ -52,6 +61,7 @@ func startDownloads(window *mygo.Window, screen *app.App) error {
 	window.OnClosed(cancel)
 	screen.OnChooseDirectory(d.chooseDirectory)
 	screen.OnDownload(d.act)
+	screen.OnFullUpdate(d.fullUpdate)
 	screen.OnOpenDownload(d.openDirectory)
 	window.OnFocus(func() { d.update(d.checkGameUpdates) })
 	screen.SetDownloadDirectory("", true, nil)
@@ -179,6 +189,17 @@ func (d *downloads) chooseDirectory() {
 	}()
 }
 
+func (d *downloads) fullUpdate(game string) {
+	job := d.jobs[game]
+	if job == nil || job.cancel != nil || job.installed.Version == "" || !job.state.Differential || (job.state.Stage != "ready" && job.state.Stage != "failed") || d.choosing || d.screen.GameBusy(game) {
+		return
+	}
+	job.forceFull = true
+	job.started = false
+	job.offer = downloadOffer{}
+	d.act(game)
+}
+
 func (d *downloads) act(game string) {
 	job := d.jobs[game]
 	if job == nil || job.state.Stage == "loading-record" || d.directory == "" || d.choosing {
@@ -228,22 +249,29 @@ func (d *downloads) act(game string) {
 	job.state.Stage, job.state.Error, job.state.BytesPerSecond = "checking", "", 0
 	job.state.Updating = updating
 	d.screen.SetDownload(game, job.state)
-	go d.run(ctx, cancel, game, directory, token, install, updating)
+	go d.run(ctx, cancel, game, directory, token, install, updating, job.forceFull, job.offer)
 }
 
-func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, directory string, token uint64, install, updating bool) {
+func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, directory string, token uint64, install, updating, forceFull bool, accepted downloadOffer) {
 	defer cancel()
 	if _, err := settings.ValidateDirectory(directory); err != nil {
-		d.finish(game, token, err, download.Record{})
+		d.finish(game, token, err, download.Record{}, false)
 		return
 	}
 	manager := download.New(directory)
-	plan, err := manager.Resolve(ctx, download.GameID(game))
+	var plan download.Plan
+	var err error
+	if updating && !forceFull {
+		plan, err = manager.ResolveUpdate(ctx, download.GameID(game))
+	} else {
+		plan, err = manager.Resolve(ctx, download.GameID(game))
+	}
 	if err != nil {
-		d.finish(game, token, err, download.Record{})
+		d.finish(game, token, err, download.Record{}, plan.Differential)
 		return
 	}
-	if !install {
+	offer := downloadOffer{plan.Version, plan.ManifestMD5, plan.Differential, plan.DownloadBytes, plan.RequiredBytes}
+	if !install || offer != accepted {
 		d.update(func() {
 			job := d.jobs[game]
 			if job.token != token {
@@ -253,7 +281,9 @@ func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, di
 			if job.state.Stage == "pausing" {
 				job.state.Stage = "paused"
 			} else {
-				job.state = app.DownloadState{Stage: "ready", Version: plan.Version, Directory: directory, TotalBytes: plan.DownloadBytes, RequiredBytes: plan.DownloadBytes + plan.UnpackedBytes, Updating: updating}
+				job.offer = offer
+				job.started = false
+				job.state = app.DownloadState{Stage: "ready", Version: plan.Version, Directory: directory, TotalBytes: plan.DownloadBytes, RequiredBytes: plan.RequiredBytes, Updating: updating, Differential: plan.Differential}
 			}
 			d.screen.SetDownload(game, job.state)
 		})
@@ -261,7 +291,7 @@ func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, di
 	}
 	lock, err := launch.LockForUpdate(download.GameID(game))
 	if err != nil {
-		d.finish(game, token, fmt.Errorf("无法开始安装，请确认游戏已退出：%w", err), download.Record{})
+		d.finish(game, token, fmt.Errorf("无法开始安装，请确认游戏已退出：%w", err), download.Record{}, plan.Differential)
 		return
 	}
 	var lastUpdate, speedStart time.Time
@@ -286,10 +316,10 @@ func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, di
 			return
 		}
 		lastUpdate, previousStage, previousFile = now, stage, progress.File
-		state := app.DownloadState{Stage: stage, Version: plan.Version, Directory: directory, File: progress.File, DoneBytes: progress.DoneBytes, TotalBytes: progress.TotalBytes, BytesPerSecond: max(0, speed), Updating: updating}
+		state := app.DownloadState{Stage: stage, Version: plan.Version, Directory: directory, File: progress.File, DoneBytes: progress.DoneBytes, TotalBytes: progress.TotalBytes, BytesPerSecond: max(0, speed), Updating: updating, Differential: plan.Differential}
 		d.publishProgress(game, token, state)
 	})
-	d.finish(game, token, errors.Join(err, lock.Close()), record)
+	d.finish(game, token, errors.Join(err, lock.Close()), record, plan.Differential)
 }
 
 func (d *downloads) publishProgress(game string, token uint64, state app.DownloadState) {
@@ -314,7 +344,7 @@ func (d *downloads) publishProgress(game string, token uint64, state app.Downloa
 	})
 }
 
-func (d *downloads) finish(game string, token uint64, err error, record download.Record) {
+func (d *downloads) finish(game string, token uint64, err error, record download.Record, differential bool) {
 	d.update(func() {
 		job := d.jobs[game]
 		if job.token != token {
@@ -322,6 +352,7 @@ func (d *downloads) finish(game string, token uint64, err error, record download
 		}
 		job.cancel = nil
 		job.state.BytesPerSecond = 0
+		job.state.Differential = differential
 		switch {
 		case errors.Is(err, context.Canceled):
 			job.state.Stage, job.state.Error = "paused", ""
@@ -332,6 +363,8 @@ func (d *downloads) finish(game string, token uint64, err error, record download
 			job.state = app.DownloadState{Stage: "completed", Version: record.Version, Directory: record.Directory}
 			job.installed = record
 			job.started = false
+			job.offer = downloadOffer{}
+			job.forceFull = false
 			job.latest = nil
 			job.update = app.GameUpdateState{}
 			d.screen.SetGameUpdate(game, job.update)

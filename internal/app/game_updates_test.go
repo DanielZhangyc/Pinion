@@ -38,7 +38,7 @@ func TestGameUpdateInterfaceIntegration(t *testing.T) {
 				a.SetRuntime(RuntimeState{Stage: "ready"})
 				a.SetDownloadDirectory(t.TempDir(), false, nil)
 				a.SetDownload(id, DownloadState{Stage: "completed", Version: latest.Version})
-				launches, updates := 0, 0
+				launches, updates, fullUpdates := 0, 0, 0
 				a.OnLaunch(func(requested string) {
 					if requested != id {
 						t.Fatalf("launched %q, want %q", requested, id)
@@ -50,6 +50,12 @@ func TestGameUpdateInterfaceIntegration(t *testing.T) {
 						t.Fatalf("updated %q, want %q", requested, id)
 					}
 					updates++
+				})
+				a.OnFullUpdate(func(requested string) {
+					if requested != id {
+						t.Fatalf("full update requested %q, want %q", requested, id)
+					}
+					fullUpdates++
 				})
 				view := ui.NewTester(a.View, size[0], size[1])
 				if err := view.Click(game.label); err != nil {
@@ -115,6 +121,25 @@ func TestGameUpdateInterfaceIntegration(t *testing.T) {
 					}
 					for range 3 {
 						view.Frame()
+					}
+				}
+				for _, mode := range []struct {
+					differential bool
+					label        string
+				}{{true, "差分更新"}, {false, "完整更新"}} {
+					a.SetDownload(id, DownloadState{Stage: "ready", Version: latest.Version, Updating: true, Differential: mode.differential})
+					view.Frame()
+					if !view.HasText(mode.label) {
+						t.Fatalf("update mode %s is hidden", mode.label)
+					}
+					_, offered := view.Find("改用完整更新")
+					if offered != mode.differential {
+						t.Fatal("full update choice does not match the displayed mode")
+					}
+					if mode.differential {
+						if err := view.Click("改用完整更新"); err != nil || fullUpdates != 1 {
+							t.Fatalf("full update choice: count=%d err=%v", fullUpdates, err)
+						}
 					}
 				}
 				a.SetDownload(id, DownloadState{Stage: "completed", Version: latest.Version})

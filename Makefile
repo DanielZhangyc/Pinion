@@ -3,11 +3,19 @@
 
 MINGW_CC ?= x86_64-w64-mingw32-gcc
 BOOTSTRAP := internal/launch/assets/endfield-bootstrap.exe
+HPATCH := internal/download/assets/pinion-hpatch
+HPATCH_SOURCE := third_party/hdiffpatch/HPatch
 RUNTIME_SOURCE ?= $(HOME)/Library/Application Support/Gryph Launcher/Runtime/current
 RUNTIME_OUTPUT ?= resources/runtime
 RUNTIME_URL ?=
 
-assets: $(BOOTSTRAP)
+assets: $(BOOTSTRAP) $(HPATCH)
+
+$(HPATCH): tools/hpatch/main.c $(wildcard $(HPATCH_SOURCE)/*.h) $(HPATCH_SOURCE)/hpatch_mt/hpatch_mt.h $(HPATCH_SOURCE)/patch.c Makefile
+	mkdir -p $(@D)
+	xcrun clang -arch arm64 -mmacosx-version-min=15.0 -std=c11 -O2 -Wall -Wextra -Wno-unused-parameter -D_IS_USED_MULTITHREAD=0 -D_HPATCH_IS_USED_MULTITHREAD=0 -I$(HPATCH_SOURCE) tools/hpatch/main.c $(HPATCH_SOURCE)/patch.c -o $@.tmp
+	codesign --force --sign - $@.tmp
+	mv $@.tmp $@
 
 $(BOOTSTRAP): tools/endfield-bootstrap/main.c Makefile
 	mkdir -p $(@D)

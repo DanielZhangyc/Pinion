@@ -8,6 +8,8 @@
 - direnv、Go 和 MinGW-w64（提供 `x86_64-w64-mingw32-gcc`）。
 - Go 版本由 `.envrc` 固定，MyGo 版本由 `go.mod` 固定。
 
+`make assets` 同时使用 `xcrun clang` 编译差分合成组件，固定上游版本与许可证见 `third_party/hdiffpatch/`。该 arm64 组件最低支持 macOS 15，构建时签名并内嵌到应用，使用时无需安装编译工具；Go 仍以 `CGO_ENABLED=0` 构建。
+
 Go 命令通过 `direnv exec .` 或 Makefile 执行：
 
 ```sh

@@ -69,9 +69,12 @@ type App struct {
 	onOpenLaunchLog    func(string)
 	onChooseDirectory  func()
 	onDownload         func(string)
+	onFullUpdate       func(string)
 	onOpenDownload     func(string)
 	runtime            RuntimeState
 	onRuntimeAction    func()
+	runtimeRepair      RuntimeRepairState
+	onRuntimeRepair    func()
 	onInstallRosetta   func()
 	update             UpdateState
 	dismissedUpdate    string
@@ -306,6 +309,7 @@ func (a *App) game(c *ui.Context, title string, icon *ui.SVG) {
 			}
 			a.downloadButton(c)
 			a.launchPreviousVersion(c)
+			a.fullUpdateButton(c)
 			ui.Spacer(c)
 			if a.page == endfield && a.videoAvailable {
 				a.playback(c)
@@ -386,6 +390,7 @@ func (a *App) settings(c *ui.Context) {
 		ui.Text(c, "游戏运行环境").FontSize(fontBody).Bold()
 		a.runtimeDetails(c, true)
 		a.runtimeActions(c)
+		a.runtimeRepairAction(c)
 	})
 	ui.Column(c).FillWidth().MaxWidth(640).Gap(16).Children(func() {
 		ui.Text(c, "游戏下载目录").FontSize(fontBody).Bold()

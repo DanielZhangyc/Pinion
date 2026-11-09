@@ -5,3 +5,5 @@
 /.direnv/
 .DS_Store
 mygo_windows_*.syso
+/internal/download/assets/pinion-hpatch
+/internal/download/assets/pinion-hpatch.tmp

@@ -4,6 +4,8 @@
 
 Pinion 使用 MyGo、FineWine / Wine、DXMT、MoltenVK 等开源组件。Go 依赖版本记录在 `go.mod` 和 `go.sum`；FineWine 运行包保留各组件的许可证及来源记录。
 
+官方二进制差分的合成使用 [HDiffPatch](https://github.com/sisong/HDiffPatch) v5.1.3 的 HPatch 核心，固定提交 `3b9dca715ca492873bf2c49e22e5d5b7d2a78620`。必要源码及来源记录位于 `third_party/hdiffpatch/`，MIT 许可全文随应用提供于 [hdiffpatch.txt](hdiffpatch.txt)。当前仅构建无压缩 `HDIFFSF20` 合成所需代码，不包含差分生成器。
+
 更新检查使用 Go 官方 `golang.org/x/mod/semver` 比较版本，BSD 许可全文见 [go-mod.txt](go-mod.txt)。
 
 界面色板采用 [Radix Colors](https://github.com/radix-ui/colors) 的 sRGB 色值，MIT 许可全文见同目录的 [radix-colors.txt](radix-colors.txt)。游戏强调色来自[明日方舟官网](https://ak.hypergryph.com/)和[终末地官网](https://endfield.hypergryph.com/)。

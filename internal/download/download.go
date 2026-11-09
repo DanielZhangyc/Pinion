@@ -56,6 +56,8 @@ type File struct {
 }
 
 type Plan struct {
+	Differential  bool   `json:"differential"`
+	RequiredBytes int64  `json:"required_bytes"`
 	Game          GameID `json:"game"`
 	Version       string `json:"version"`
 	DownloadBytes int64  `json:"download_bytes"`
@@ -66,6 +68,7 @@ type Plan struct {
 	ManifestURL   string `json:"manifest_url"`
 	ManifestBytes int64  `json:"manifest_bytes"`
 	archiveFiles  []archiveItem
+	patch         *patchPlan
 }
 
 type archiveItem struct {
@@ -276,6 +279,7 @@ func (m *Manager) Resolve(ctx context.Context, game GameID) (Plan, error) {
 		}
 		plan.archiveFiles = append(plan.archiveFiles, archiveItem{name, int64(f.UncompressedSize64), f.CRC32, f.FileInfo().IsDir()})
 	}
+	plan.RequiredBytes = plan.DownloadBytes + plan.UnpackedBytes
 	return plan, plan.validate(true)
 }
 
@@ -299,7 +303,7 @@ func (p Plan) validate(full bool) error {
 	if total != p.DownloadBytes || total > 1<<40 {
 		return errors.New("invalid total download size")
 	}
-	if full && (len(p.Files) == 0 || p.UnpackedBytes <= 0 || len(p.archiveFiles) == 0) {
+	if full && (len(p.Files) == 0 || p.UnpackedBytes <= 0 || len(p.archiveFiles) == 0 || p.Differential != (p.patch != nil)) {
 		return errors.New("missing file manifest or ZIP directory")
 	}
 	for _, f := range p.Files {
@@ -602,6 +606,9 @@ func (m *Manager) Install(ctx context.Context, plan Plan, report func(Progress))
 			return record, err
 		}
 	}
+	if err == nil && installed.Version != plan.Version && !(VersionInfo{Version: plan.Version, ManifestMD5: plan.ManifestMD5}).UpdateAvailable(installed) {
+		return record, errors.New("refusing to replace a newer installed version; resolve the update again")
+	}
 	if err == nil && installed.Version == plan.Version && installed.ManifestMD5 == plan.ManifestMD5 {
 		// Never repair in place while completed.json points at this directory.
 		// An already-installed identity must still pass the full manifest check.
@@ -635,6 +642,12 @@ func (m *Manager) Install(ctx context.Context, plan Plan, report func(Progress))
 			return record, err
 		}
 		return commitRecord(gr, plan, base, emit)
+	}
+	if plan.patch != nil {
+		if installed.Version != plan.patch.oldVersion || installed.ManifestMD5 != plan.patch.oldManifest {
+			return record, errors.New("installed differential base changed; resolve the update again")
+		}
+		return m.installPatch(ctx, gr, plan, base, installed, emit)
 	}
 	for _, dir := range []string{"cache", "game", "staging"} {
 		if err := makeDirs(gr, path.Join(base, dir)); err != nil {

@@ -44,6 +44,7 @@ func startRuntimeSetup(window *mygo.Window, screen *app.App) error {
 		}
 	})
 	screen.OnRuntimeAction(r.act)
+	screen.OnRuntimeRepair(r.repair)
 	screen.OnInstallRosetta(r.installRosetta)
 	r.start()
 	return nil
