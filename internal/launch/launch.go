@@ -42,6 +42,9 @@ func profile(game download.GameID) (gameProfile, error) {
 	switch game {
 	case download.Arknights:
 		return gameProfile{game, "明日方舟", "Arknights.exe", "Arknights", "dxmt", "DXMT / D3D11", "-force-d3d11"}, nil
+	case download.ArknightsBilibili:
+		// A separate prefix keeps Bilibili account data apart from the official client.
+		return gameProfile{game, "明日方舟（B 服）", "Arknights.exe", "ArknightsBilibili", "dxmt", "DXMT / D3D11", "-force-d3d11"}, nil
 	case download.Endfield:
 		return gameProfile{game, "明日方舟：终末地", "Endfield.exe", "Endfield", "vulkan", "Vulkan", "-force-vulkan"}, nil
 	default:

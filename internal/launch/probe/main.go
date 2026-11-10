@@ -15,7 +15,7 @@ import (
 )
 
 func run() error {
-	game := flag.String("game", "", "game to launch: arknights or endfield")
+	game := flag.String("game", "", "game to launch: arknights, arknights-bilibili or endfield")
 	root := flag.String("download-root", "", "absolute path to the configured game download directory")
 	flag.Parse()
 	if !filepath.IsAbs(*root) || flag.NArg() != 0 {

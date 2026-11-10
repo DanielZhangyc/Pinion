@@ -37,10 +37,30 @@ func TestLaunchLockAcrossProcesses(t *testing.T) {
 	}
 }
 
+func TestBilibiliProfile(t *testing.T) {
+	official, err := profile(download.Arknights)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bilibili, err := profile(download.ArknightsBilibili)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bilibili.prefix == official.prefix || bilibili.id == official.id {
+		t.Fatal("Bilibili shares the official prefix or launch lock")
+	}
+	if bilibili.executable != official.executable || bilibili.backend != official.backend || bilibili.argument != official.argument {
+		t.Fatalf("Bilibili launch settings %+v differ from official %+v", bilibili, official)
+	}
+	if _, err := profile("arknights-unknown"); err == nil {
+		t.Fatal("accepted an unknown game")
+	}
+}
+
 func TestUpdateAndLaunchShareLock(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv(paths.DataRootEnvironment, root)
-	for _, game := range []download.GameID{download.Arknights, download.Endfield} {
+	for _, game := range []download.GameID{download.Arknights, download.ArknightsBilibili, download.Endfield} {
 		t.Run(string(game), func(t *testing.T) {
 			path := filepath.Join(root, string(game)+"-launch.lock")
 			// Holding the ordinary launch lock prevents update acquisition before
