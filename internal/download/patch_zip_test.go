@@ -209,50 +209,54 @@ func TestOfficialPatchZIPRange(t *testing.T) {
 	defer cancel()
 	m := New(t.TempDir())
 	defer m.client.CloseIdleConnections()
-	_, patch, err := m.officialPatch(ctx, Arknights, "78.0.0")
-	if err != nil {
-		t.Fatal(err)
+	for _, game := range []GameID{Arknights, ArknightsBilibili} {
+		t.Run(string(game), func(t *testing.T) {
+			_, patch, err := m.officialPatch(ctx, game, "78.0.0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if patch == nil || len(patch.Packs) == 0 {
+				t.Fatal("official 78.0.0 patch no longer available")
+			}
+			remote := &remoteArchive{ctx: ctx, manager: m, budget: 4 << 20}
+			var total int64
+			for _, pack := range patch.Packs {
+				size, err := strconv.ParseInt(pack.Size, 10, 64)
+				if err != nil || size <= 0 {
+					t.Fatalf("invalid official patch size %q", pack.Size)
+				}
+				remote.packs = append(remote.packs, Pack{URL: pack.URL, Size: size, MD5: pack.MD5})
+				total += size
+			}
+			zr, err := zip.NewReader(remote, total)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range zr.File {
+				if !strings.HasSuffix(f.Name, "char_1027_greyy2.ab_patch") {
+					continue
+				}
+				if f.UncompressedSize64 > 64<<10 || f.CompressedSize64 > 64<<10 {
+					t.Fatal("selected official diff exceeds 64 KiB sample limit")
+				}
+				r, err := openPatchFile(f, patch.Password)
+				if err != nil {
+					t.Fatal(err)
+				}
+				plain, readErr := io.ReadAll(r)
+				closeErr := r.Close()
+				if readErr != nil || closeErr != nil {
+					t.Fatalf("split patch read=%v close=%v", readErr, closeErr)
+				}
+				if !bytes.HasPrefix(plain, []byte("HDIFFSF20&\x00")) {
+					t.Fatalf("official patch no longer contains the observed HDIFFSF20 header")
+				}
+				t.Logf("official split ZIP size=%d entries=%d sample=%s bytes=%d sha256=%x Range bytes=%d", total, len(zr.File), f.Name, len(plain), sha256.Sum256(plain), (4<<20)-remote.budget)
+				return
+			}
+			t.Fatal("official split patch sample missing")
+		})
 	}
-	if patch == nil || len(patch.Packs) == 0 {
-		t.Fatal("official 78.0.0 patch no longer available")
-	}
-	remote := &remoteArchive{ctx: ctx, manager: m, budget: 4 << 20}
-	var total int64
-	for _, pack := range patch.Packs {
-		size, err := strconv.ParseInt(pack.Size, 10, 64)
-		if err != nil || size <= 0 {
-			t.Fatalf("invalid official patch size %q", pack.Size)
-		}
-		remote.packs = append(remote.packs, Pack{URL: pack.URL, Size: size, MD5: pack.MD5})
-		total += size
-	}
-	zr, err := zip.NewReader(remote, total)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range zr.File {
-		if !strings.HasSuffix(f.Name, "char_1027_greyy2.ab_patch") {
-			continue
-		}
-		if f.UncompressedSize64 > 64<<10 || f.CompressedSize64 > 64<<10 {
-			t.Fatal("selected official diff exceeds 64 KiB sample limit")
-		}
-		r, err := openPatchFile(f, patch.Password)
-		if err != nil {
-			t.Fatal(err)
-		}
-		plain, readErr := io.ReadAll(r)
-		closeErr := r.Close()
-		if readErr != nil || closeErr != nil {
-			t.Fatalf("split patch read=%v close=%v", readErr, closeErr)
-		}
-		if !bytes.HasPrefix(plain, []byte("HDIFFSF20&\x00")) {
-			t.Fatalf("official patch no longer contains the observed HDIFFSF20 header")
-		}
-		t.Logf("official split ZIP size=%d entries=%d sample=%s bytes=%d sha256=%x Range bytes=%d", total, len(zr.File), f.Name, len(plain), sha256.Sum256(plain), (4<<20)-remote.budget)
-		return
-	}
-	t.Fatal("official split patch sample missing")
 }
 
 func TestOfficialPatchZIPPlainRange(t *testing.T) {

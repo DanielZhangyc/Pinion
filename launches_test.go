@@ -8,9 +8,9 @@ import (
 )
 
 func TestLaunchObservationIsolation(t *testing.T) {
-	games := map[string]*gameLaunch{
-		"arknights": {state: app.LaunchState{Stage: "preparing"}, active: true},
-		"endfield":  {state: app.LaunchState{Stage: "preparing"}, active: true},
+	games := map[string]*gameLaunch{}
+	for _, game := range launchGames {
+		games[string(game.id)] = &gameLaunch{state: app.LaunchState{Stage: "preparing"}, active: true}
 	}
 	// Use actual kernel process observations; these tests do not start games.
 	snapshot := gamewatch.Capture()
@@ -20,14 +20,15 @@ func TestLaunchObservationIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 		g := games[string(game.id)]
-		other := "endfield"
-		if other == string(game.id) {
-			other = "arknights"
+		before := map[string]gameLaunch{}
+		for id, other := range games {
+			before[id] = *other
 		}
-		before := *games[other]
 		g.observe(running, "")
-		if *games[other] != before {
-			t.Fatal("observing one game changed the other game's launch state")
+		for id, other := range games {
+			if id != string(game.id) && *other != before[id] {
+				t.Fatal("observing one game changed another game's launch state")
+			}
 		}
 		if running && (g.state.Stage != "running" || !g.observed) {
 			t.Fatal("an observed live game must be shown as running")

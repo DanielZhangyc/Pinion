@@ -42,7 +42,7 @@ func TestOfficialGameVersions(t *testing.T) {
 	defer cancel()
 	m := New("")
 	defer m.client.CloseIdleConnections()
-	for _, game := range []GameID{Arknights, Endfield} {
+	for _, game := range []GameID{Arknights, ArknightsBilibili, Endfield} {
 		t.Run(string(game), func(t *testing.T) {
 			latest, err := m.LatestVersion(ctx, game)
 			if err != nil {

@@ -44,6 +44,8 @@ var drawerEase = ui.CubicBezier(.32, .72, 0, 1)
 // App owns persistent state. UI elements belong only to their current build.
 type App struct {
 	page               page
+	arknightsChannel   int
+	onSelectChannel    func(string)
 	artwork            *Artwork
 	collapsed          bool
 	compactWidth       float32
@@ -295,6 +297,9 @@ func (a *App) game(c *ui.Context, title string, icon *ui.SVG) {
 			ui.Icon(c, icon).Size(24, 24).Shrink(0)
 			ui.Text(c, title).Label("当前游戏").FontSize(fontTitle).Bold()
 		})
+		if a.page == arknights {
+			a.channelSelector(c)
+		}
 		launchReady := a.downloads[a.selectedGame()].Stage == "completed"
 		a.runtimeDetails(c, false)
 		if launchReady {

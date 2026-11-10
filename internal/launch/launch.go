@@ -42,6 +42,9 @@ func profile(game download.GameID) (gameProfile, error) {
 	switch game {
 	case download.Arknights:
 		return gameProfile{game, "明日方舟", "Arknights.exe", "Arknights", "dxmt", "DXMT / D3D11", "-force-d3d11"}, nil
+	case download.ArknightsBilibili:
+		// A separate prefix keeps Bilibili account data apart from the official client.
+		return gameProfile{game, "明日方舟（B 服）", "Arknights.exe", "ArknightsBilibili", "dxmt", "DXMT / D3D11", "-force-d3d11"}, nil
 	case download.Endfield:
 		return gameProfile{game, "明日方舟：终末地", "Endfield.exe", "Endfield", "vulkan", "Vulkan", "-force-vulkan"}, nil
 	default:
@@ -59,19 +62,58 @@ func StartEndfield(ctx context.Context, downloadRoot string, logReady func(strin
 	return Start(ctx, download.Endfield, downloadRoot, logReady)
 }
 
+var games = []download.GameID{download.Arknights, download.ArknightsBilibili, download.Endfield}
+
 // LockForUpdate excludes launches and other updates for this game across
 // processes. The caller must keep the returned file open throughout installing
 // and publishing the completed record, and close it on every exit path.
 // A fresh process scan after locking also detects games started outside Pinion.
-func LockForUpdate(game download.GameID) (*os.File, error) {
+// An empty downloadRoot treats the executable running anywhere as this game.
+func LockForUpdate(game download.GameID, downloadRoot string) (*os.File, error) {
 	p, err := profile(game)
 	if err != nil {
 		return nil, err
 	}
-	return lockIdleGame(p)
+	return lockIdleGame(p, downloadRoot)
 }
 
-func lockIdleGame(p gameProfile) (*os.File, error) {
+// Running reports whether game runs: any process from its directory under
+// downloadRoot, or its executable from an unknown location. Distributions that
+// share an executable do not count each other's installations.
+func Running(snapshot gamewatch.Snapshot, game download.GameID, downloadRoot string) (bool, error) {
+	p, err := profile(game)
+	if err != nil {
+		return false, err
+	}
+	return running(snapshot, p, downloadRoot)
+}
+
+func running(snapshot gamewatch.Snapshot, p gameProfile, downloadRoot string) (bool, error) {
+	if !filepath.IsAbs(downloadRoot) {
+		return snapshot.Running(p.executable)
+	}
+	// Installation records and launched program paths use the resolved root.
+	if resolved, err := filepath.EvalSymlinks(downloadRoot); err == nil {
+		downloadRoot = resolved
+	}
+	inside, insideErr := snapshot.RunningIn(filepath.Join(downloadRoot, string(p.id)))
+	if inside {
+		return true, nil
+	}
+	var others []string
+	for _, game := range games {
+		if other, err := profile(game); err == nil && game != p.id && strings.EqualFold(other.executable, p.executable) {
+			others = append(others, filepath.Join(downloadRoot, string(game)))
+		}
+	}
+	outside, outsideErr := snapshot.RunningOutside(p.executable, others...)
+	if outside {
+		return true, nil
+	}
+	return false, errors.Join(insideErr, outsideErr)
+}
+
+func lockIdleGame(p gameProfile, downloadRoot string) (*os.File, error) {
 	layout, err := paths.Resolve()
 	if err != nil {
 		return nil, err
@@ -83,11 +125,11 @@ func lockIdleGame(p gameProfile) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s：%w", p.title, err)
 	}
-	running, err := gamewatch.Running(p.executable)
+	busy, err := running(gamewatch.Capture(p.executable), p, downloadRoot)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("检查游戏进程：%w", err), lock.Close())
 	}
-	if running {
+	if busy {
 		return nil, errors.Join(fmt.Errorf("%s：%w", p.title, ErrAlreadyRunning), lock.Close())
 	}
 	return lock, nil
@@ -105,7 +147,7 @@ func Start(ctx context.Context, game download.GameID, downloadRoot string, logRe
 		return nil, err
 	}
 	root := layout.Data
-	lock, err := lockIdleGame(p)
+	lock, err := lockIdleGame(p, downloadRoot)
 	if err != nil {
 		return nil, err
 	}

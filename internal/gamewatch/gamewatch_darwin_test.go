@@ -186,6 +186,80 @@ func TestSharedSnapshotTracksRealProcesses(t *testing.T) {
 	}
 }
 
+func TestHostPath(t *testing.T) {
+	for program, want := range map[string]string{
+		"/Users/a/arknights-bilibili/versions/79.0.0/game/Arknights.exe":         "/Users/a/arknights-bilibili/versions/79.0.0/game/Arknights.exe",
+		`Z:\Users\a\arknights-bilibili\versions\79.0.0\game\PlatformProcess.exe`: "/Users/a/arknights-bilibili/versions/79.0.0/game/PlatformProcess.exe",
+		`z:/Users/a/../b/Arknights.exe`:                                          "/Users/b/Arknights.exe",
+		`C:\GryphEndfield\Endfield.exe`:                                          "",
+		`Arknights.exe`:                                                          "",
+	} {
+		if got := hostPath(program); got != want {
+			t.Errorf("hostPath(%q) = %q, want %q", program, got, want)
+		}
+	}
+	if within("/Users/a/arknights-bilibili/x.exe", "/Users/a/arknights") || !within("/Users/A/Arknights/x.exe", "/users/a/arknights/") {
+		t.Fatal("directory containment must be component-wise and case-insensitive")
+	}
+}
+
+// A genuine helper process runs under a PE name from a chosen directory, as
+// Wine helpers do. Queries must attribute it only to that directory.
+func TestSnapshotProgramDirectories(t *testing.T) {
+	program, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	install, other := t.TempDir(), t.TempDir()
+	path := filepath.Join(install, "game", "Helper.exe")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, program, 0700); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(path, "-test.run=^TestSnapshotChild$")
+	child.Env = append(os.Environ(), "GRYPH_SNAPSHOT_CHILD=1")
+	input, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	t.Cleanup(func() {
+		if !waited {
+			input.Close()
+			child.Wait()
+		}
+	})
+	snapshot := Capture()
+	if running, err := snapshot.RunningIn(install); err != nil || !running {
+		t.Fatalf("helper in its directory: running=%t error=%v", running, err)
+	}
+	if running, err := snapshot.RunningIn(other); err != nil || running {
+		t.Fatalf("helper in another directory: running=%t error=%v", running, err)
+	}
+	if running, err := snapshot.RunningOutside("Helper.exe", other, install); err != nil || running {
+		t.Fatalf("helper inside a known directory reported outside: running=%t error=%v", running, err)
+	}
+	if running, err := snapshot.RunningOutside("Helper.exe", other); err != nil || !running {
+		t.Fatalf("helper outside the given directory: running=%t error=%v", running, err)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = child.Wait()
+	waited = true
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running, err := Capture().RunningIn(install); err != nil || running {
+		t.Fatalf("exited helper retained: running=%t error=%v", running, err)
+	}
+}
+
 func TestSnapshotChild(t *testing.T) {
 	if os.Getenv("GRYPH_SNAPSHOT_CHILD") != "1" {
 		t.Skip("helper of TestSharedSnapshotTracksRealProcesses")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"pinion/internal/app"
@@ -49,6 +50,8 @@ type downloads struct {
 	generation uint64
 	nextToken  uint64
 	jobs       map[string]*downloadJob
+	// saving serializes settings writers, each of which loads and replaces the file.
+	saving sync.Mutex
 }
 
 func startDownloads(window *mygo.Window, screen *app.App) error {
@@ -63,6 +66,7 @@ func startDownloads(window *mygo.Window, screen *app.App) error {
 	screen.OnDownload(d.act)
 	screen.OnFullUpdate(d.fullUpdate)
 	screen.OnOpenDownload(d.openDirectory)
+	screen.OnSelectChannel(d.selectChannel)
 	window.OnFocus(func() { d.update(d.checkGameUpdates) })
 	screen.SetDownloadDirectory("", true, nil)
 	go func() {
@@ -74,6 +78,7 @@ func startDownloads(window *mygo.Window, screen *app.App) error {
 				screen.SetDownloadDirectory("", false, fmt.Errorf("无法读取下载目录设置，请重新选择目录：%w", err))
 				return
 			}
+			screen.SetArknightsChannel(prefs.ArknightsChannel)
 			d.setDirectory(prefs.DownloadDirectory)
 		})
 	}()
@@ -110,7 +115,7 @@ func (d *downloads) setDirectory(directory string) {
 	d.generation++
 	generation := d.generation
 	d.screen.SetDownloadDirectory(directory, false, nil)
-	for _, game := range []download.GameID{download.Arknights, download.Endfield} {
+	for _, game := range []download.GameID{download.Arknights, download.ArknightsBilibili, download.Endfield} {
 		key := string(game)
 		job := &downloadJob{}
 		if directory != "" {
@@ -170,7 +175,7 @@ func (d *downloads) chooseDirectory() {
 		if err == nil && len(paths) > 0 && d.ctx.Err() == nil {
 			directory, err = settings.ValidateDirectory(paths[0])
 			if err == nil {
-				err = d.store.Save(settings.Settings{DownloadDirectory: directory})
+				err = d.saveSettings(func(prefs *settings.Settings) { prefs.DownloadDirectory = directory })
 			}
 		}
 		d.update(func() {
@@ -186,6 +191,28 @@ func (d *downloads) chooseDirectory() {
 			}
 			d.setDirectory(directory)
 		})
+	}()
+}
+
+// saveSettings changes one preference and keeps the others. Unreadable settings
+// are replaced, as choosing a directory is how the user recovers from them.
+func (d *downloads) saveSettings(change func(*settings.Settings)) error {
+	d.saving.Lock()
+	defer d.saving.Unlock()
+	prefs, err := d.store.Load()
+	if err != nil {
+		prefs = settings.Settings{}
+	}
+	change(&prefs)
+	return d.store.Save(prefs)
+}
+
+// selectChannel remembers the Arknights channel; running jobs are unaffected.
+func (d *downloads) selectChannel(game string) {
+	go func() {
+		if err := d.saveSettings(func(prefs *settings.Settings) { prefs.ArknightsChannel = game }); err != nil {
+			log.Printf("save Arknights channel: %v", err)
+		}
 	}()
 }
 
@@ -289,7 +316,7 @@ func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, di
 		})
 		return
 	}
-	lock, err := launch.LockForUpdate(download.GameID(game))
+	lock, err := launch.LockForUpdate(download.GameID(game), directory)
 	if err != nil {
 		d.finish(game, token, fmt.Errorf("无法开始安装，请确认游戏已退出：%w", err), download.Record{}, plan.Differential)
 		return
@@ -334,7 +361,7 @@ func (d *downloads) publishProgress(game string, token uint64, state app.Downloa
 				d.screen.SetDownload(game, state)
 			}
 		}
-		if d.screen.Presentation().Background == game {
+		if d.screen.SelectedGame() == game {
 			d.update(apply)
 		} else {
 			// Keep the model current on the UI thread without rebuilding an

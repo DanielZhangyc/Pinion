@@ -38,6 +38,7 @@ var launchGames = []struct {
 	executable string
 }{
 	{download.Arknights, "明日方舟", "Arknights.exe"},
+	{download.ArknightsBilibili, "明日方舟（B 服）", "Arknights.exe"},
 	{download.Endfield, "明日方舟：终末地", "Endfield.exe"},
 }
 
@@ -67,6 +68,16 @@ func (l *launches) update(fn func()) {
 }
 
 func (l *launches) publish(game string) { l.screen.SetLaunch(game, l.games[game].state) }
+
+// downloadRoot is empty when settings cannot be read, so detection falls back
+// to matching each executable anywhere.
+func (l *launches) downloadRoot() string {
+	prefs, err := l.store.Load()
+	if err != nil {
+		return ""
+	}
+	return prefs.DownloadDirectory
+}
 
 func launchTitle(game string) string {
 	for _, candidate := range launchGames {
@@ -118,7 +129,7 @@ func (l *launches) finish(game string, err error) {
 		for _, candidate := range launchGames {
 			if string(candidate.id) == game {
 				var detectionErr error
-				alreadyRunning, detectionErr = gamewatch.Running(candidate.executable)
+				alreadyRunning, detectionErr = launch.Running(gamewatch.Capture(candidate.executable), candidate.id, l.downloadRoot())
 				if detectionErr != nil {
 					err = errors.Join(err, detectionErr)
 				}
@@ -166,6 +177,7 @@ func (l *launches) monitor() {
 		if l.ctx.Err() != nil {
 			return
 		}
+		root := l.downloadRoot()
 		running, err := snapshot.Running()
 		overall := observation{running: running}
 		if err != nil {
@@ -177,7 +189,7 @@ func (l *launches) monitor() {
 		}
 		for _, game := range launchGames {
 			id := string(game.id)
-			running, err := snapshot.Running(game.executable)
+			running, err := launch.Running(snapshot, game.id, root)
 			next := observation{running: running}
 			if err != nil {
 				next.message = err.Error()

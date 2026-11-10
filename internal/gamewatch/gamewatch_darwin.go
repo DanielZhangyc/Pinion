@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -71,12 +72,14 @@ func loadNative() error {
 // Snapshot holds the results of one process scan. Its queries do not inspect
 // the system again, and its state remains unchanged as processes come and go.
 type Snapshot struct {
-	running map[string]bool
-	err     error
+	running  map[string]bool
+	programs []string
+	err      error
 }
 
 // Capture scans the current UID once for all specified executable names, or
-// both supported games when no names are specified. No arguments are retained.
+// both supported games when no names are specified. It retains only the PE
+// program path of each Wine process, never its other arguments.
 func Capture(executables ...string) Snapshot {
 	if len(executables) == 0 {
 		executables = []string{"Endfield.exe", "Arknights.exe"}
@@ -102,9 +105,12 @@ func Capture(executables ...string) Snapshot {
 		if pid <= 0 {
 			continue
 		}
-		name, err := executablePID(pid, errno, executables...)
-		if name != "" {
-			snapshot.running[strings.ToLower(name)] = true
+		program, err := programPID(pid, errno, executables...)
+		if program != "" {
+			snapshot.programs = append(snapshot.programs, program)
+			if isGame(program, executables...) {
+				snapshot.running[strings.ToLower(executableName(program))] = true
+			}
 		}
 		if err != nil && !processExited(pid, err) && snapshot.err == nil {
 			snapshot.err = err
@@ -135,6 +141,42 @@ func (s Snapshot) Running(executables ...string) (bool, error) {
 			if running {
 				return true, nil
 			}
+		}
+	}
+	return false, s.err
+}
+
+// RunningIn reports whether a captured program runs from inside the absolute
+// host directory, including helpers that are not a game executable.
+func (s Snapshot) RunningIn(directory string) (bool, error) {
+	if s.running == nil {
+		return false, errors.New("gamewatch: snapshot has not been captured")
+	}
+	for _, program := range s.programs {
+		if within(hostPath(program), directory) {
+			return true, nil
+		}
+	}
+	return false, s.err
+}
+
+// RunningOutside reports whether a captured program named executable runs from
+// outside every absolute host directory. An unresolvable location is outside.
+func (s Snapshot) RunningOutside(executable string, directories ...string) (bool, error) {
+	if s.running == nil {
+		return false, errors.New("gamewatch: snapshot has not been captured")
+	}
+	for _, program := range s.programs {
+		if !isGame(program, executable) {
+			continue
+		}
+		location := hostPath(program)
+		inside := false
+		for _, directory := range directories {
+			inside = inside || within(location, directory)
+		}
+		if !inside {
+			return true, nil
 		}
 	}
 	return false, s.err
@@ -191,18 +233,22 @@ func processIDs(errno *int32) ([]int32, error) {
 }
 
 func runningPID(pid int32, errno *int32, executables ...string) (bool, error) {
-	name, err := executablePID(pid, errno, executables...)
-	return name != "", err
+	program, err := programPID(pid, errno, executables...)
+	return program != "" && isGame(program, executables...), err
 }
 
-func executablePID(pid int32, errno *int32, executables ...string) (string, error) {
+// programPID returns the program a Wine process runs, or "" for any other
+// process. Wine gives each PE process its name; helpers have their own.
+// Caller-selected executables are also accepted as programs.
+func programPID(pid int32, errno *int32, executables ...string) (string, error) {
+	isProgram := func(path string) bool { return isPE(path) || isGame(path, executables...) }
 	var name [256]byte
 	*errno = 0
 	if native.name(pid, &name[0], uint32(len(name))) <= 0 {
 		return "", nativeError("proc_name", pid, errno)
 	}
 	processName := cString(name[:])
-	if !isGame(processName, executables...) && !isWine(processName) && processName != "wine64-preloade" {
+	if !isProgram(processName) && !isWine(processName) && processName != "wine64-preloade" {
 		return "", nil
 	}
 	var path [4096]byte // PROC_PIDPATHINFO_MAXSIZE
@@ -211,28 +257,30 @@ func executablePID(pid int32, errno *int32, executables ...string) (string, erro
 		return "", nativeError("proc_pidpath", pid, errno)
 	}
 	executable := cString(path[:])
-	if isGame(executable, executables...) {
-		return executableName(executable), nil
-	}
-	// Wine may give the process its PE name and argv while proc_pidpath still
-	// points to another PE image (observed as explorer.exe in Wine's winetemp
-	// directory). Confirm that candidate's actual program argv below as well.
-	if !isWine(executable) && !isGame(processName, executables...) {
+	if !isProgram(processName) && !isWine(executable) && !isProgram(executable) {
 		return "", nil
 	}
+	// proc_pidpath names Wine's loader or a bundle in its winetemp directory
+	// (observed as wine.app and as explorer.exe), so argv identifies the program.
 	args, err := processArguments(pid, errno)
 	if err != nil {
+		if isProgram(executable) {
+			return executable, nil
+		}
 		return "", err
 	}
 	// Match the PE program, not its arguments. A preloader may retain both
 	// its own argv[0] and the Wine loader before the actual PE executable.
 	for i, arg := range args {
-		if isGame(arg, executables...) {
-			return executableName(arg), nil
+		if isProgram(arg) {
+			return arg, nil
 		}
 		if i == 2 || !isWine(arg) {
-			return "", nil
+			break
 		}
+	}
+	if isProgram(executable) {
+		return executable, nil
 	}
 	return "", nil
 }
@@ -301,6 +349,31 @@ func isGame(path string, executables ...string) bool {
 		}
 	}
 	return false
+}
+
+func isPE(path string) bool {
+	return strings.EqualFold(filepath.Ext(executableName(path)), ".exe")
+}
+
+// hostPath resolves a program path on the host. Windows paths use the Z:
+// drive, which Pinion prefixes map to the host root; other forms are unknown.
+func hostPath(program string) string {
+	if strings.HasPrefix(program, "/") {
+		return filepath.Clean(program)
+	}
+	if len(program) > 3 && (program[0] == 'Z' || program[0] == 'z') && program[1] == ':' && (program[2] == '\\' || program[2] == '/') {
+		return filepath.Clean("/" + strings.ReplaceAll(program[3:], "\\", "/"))
+	}
+	return ""
+}
+
+// within compares case-insensitively, as the default macOS volume and Wine do.
+func within(location, directory string) bool {
+	if location == "" || !filepath.IsAbs(directory) {
+		return false
+	}
+	location, directory = strings.ToLower(location), strings.ToLower(filepath.Clean(directory))
+	return location == directory || strings.HasPrefix(location, strings.TrimSuffix(directory, "/")+"/")
 }
 
 func isWine(path string) bool {

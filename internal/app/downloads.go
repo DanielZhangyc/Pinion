@@ -28,11 +28,38 @@ func (a *App) SetDownloadDirectory(path string, busy bool, err error) {
 	}
 }
 
+// Arknights channels share one page; the segmented control's index selects one.
+var arknightsChannels = []string{"arknights", "arknights-bilibili"}
+
+func (a *App) OnSelectChannel(fn func(string)) { a.onSelectChannel = fn }
+
+// SetArknightsChannel restores a saved channel; unknown values select official.
+func (a *App) SetArknightsChannel(game string) {
+	a.arknightsChannel = 0
+	for i, channel := range arknightsChannels {
+		if channel == game {
+			a.arknightsChannel = i
+		}
+	}
+}
+
+// SelectedGame is the game whose download and launch state the page shows.
+func (a *App) SelectedGame() string { return a.selectedGame() }
+
 func (a *App) selectedGame() string {
 	if a.page == arknights {
-		return "arknights"
+		return arknightsChannels[max(0, min(a.arknightsChannel, len(arknightsChannels)-1))]
 	}
 	return "endfield"
+}
+
+func (a *App) channelSelector(c *ui.Context) {
+	ui.Segmented(c.Key("arknights-channel"), &a.arknightsChannel, "官服", "B 服").Label("游戏渠道").AlignSelf(ui.Start).
+		OnChange(func() {
+			if a.onSelectChannel != nil {
+				a.onSelectChannel(a.selectedGame())
+			}
+		})
 }
 
 func (a *App) downloadDetails(c *ui.Context) {
