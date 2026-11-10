@@ -297,9 +297,6 @@ func TestOfficialFullInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if game == ArknightsBilibili && update.Differential {
-		t.Fatal("Bilibili update resolved a differential plan")
-	}
 	if update.Version == loaded.Version && update.ManifestMD5 == loaded.ManifestMD5 {
 		again, err := reopened.Install(t.Context(), update, nil)
 		if err != nil {

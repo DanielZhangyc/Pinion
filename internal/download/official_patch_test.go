@@ -69,7 +69,7 @@ func TestOfficialDifferentialPlans(t *testing.T) {
 	for _, tc := range []struct {
 		game GameID
 		old  string
-	}{{Arknights, "78.0.0"}, {Endfield, "1.6.3"}} {
+	}{{Arknights, "78.0.0"}, {ArknightsBilibili, "78.0.0"}, {Endfield, "1.6.3"}} {
 		t.Run(string(tc.game), func(t *testing.T) {
 			p, err := m.resolveDifferential(ctx, tc.game, tc.old, "")
 			if err != nil {
@@ -227,7 +227,7 @@ func checkWrittenOfficialSidecars(t *testing.T, ctx context.Context, root *os.Ro
 		if err := verifyFile(ctx, root, "sample/game/game_files", f.Size, f.MD5); err != nil {
 			t.Fatal(err)
 		}
-		if p.Game == Arknights && f.Size != 16 {
+		if p.Game != Endfield && f.Size != 16 {
 			t.Fatalf("official Arknights game_files artifact changed size: %d", f.Size)
 		}
 	}
@@ -241,7 +241,7 @@ func checkWrittenOfficialSidecars(t *testing.T, ctx context.Context, root *os.Ro
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Game == Arknights {
+	if p.Game != Endfield {
 		if sumMD5(gameFiles) == p.ManifestMD5 {
 			t.Fatal("empty game artifact replaced complete target manifest")
 		}

@@ -17,19 +17,16 @@ const (
 
 type distribution struct {
 	appcode, launcherAppcode, channel, subChannel string
-	differential                                  bool
 }
 
 func distributionFor(game GameID) (distribution, error) {
 	switch game {
 	case Arknights:
-		return distribution{"GzD1CpaWgmSq1wew", "abYeZZ16BPluCFyT", "1", "1", true}, nil
+		return distribution{"GzD1CpaWgmSq1wew", "abYeZZ16BPluCFyT", "1", "1"}, nil
 	case ArknightsBilibili:
-		// The Bilibili channel publishes patches, but they have not been
-		// validated with this installer, so updates use the full package.
-		return distribution{"GzD1CpaWgmSq1wew", "Ae1Pa3Oi2PRHpLAP", "2", "2", false}, nil
+		return distribution{"GzD1CpaWgmSq1wew", "Ae1Pa3Oi2PRHpLAP", "2", "2"}, nil
 	case Endfield:
-		return distribution{"6LL0KJuqHBVz33WK", "abYeZZ16BPluCFyT", "1", "1", true}, nil
+		return distribution{"6LL0KJuqHBVz33WK", "abYeZZ16BPluCFyT", "1", "1"}, nil
 	default:
 		return distribution{}, fmt.Errorf("unknown game ID %q", game)
 	}

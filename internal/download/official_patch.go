@@ -57,14 +57,9 @@ type patchPlan struct {
 }
 
 // ResolveUpdate uses only this launcher's completion record as the old version.
-// A publisher's explicit null patch, or a distribution without differential
-// support, selects the ordinary full package. Invalid metadata or an
-// unsupported patch fails visibly instead of changing modes.
+// A publisher's explicit null patch selects the ordinary full package. Invalid
+// metadata or an unsupported patch fails visibly instead of changing modes.
 func (m *Manager) ResolveUpdate(ctx context.Context, game GameID) (Plan, error) {
-	d, err := distributionFor(game)
-	if err != nil {
-		return Plan{}, err
-	}
 	root, err := m.openGame(game, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return m.Resolve(ctx, game)
@@ -82,9 +77,6 @@ func (m *Manager) ResolveUpdate(ctx context.Context, game GameID) (Plan, error) 
 		}
 		return Plan{}, err
 	}
-	if !d.differential {
-		return m.Resolve(ctx, game)
-	}
 	return m.resolveDifferential(ctx, game, installed.Version, installed.ManifestMD5)
 }
 
@@ -93,9 +85,6 @@ func (m *Manager) officialPatch(ctx context.Context, game GameID, oldVersion str
 	d, err := distributionFor(game)
 	if err != nil {
 		return p, nil, err
-	}
-	if !d.differential {
-		return p, nil, fmt.Errorf("differential updates are not enabled for %s", game)
 	}
 	if !validVersion(oldVersion) {
 		return p, nil, errors.New("invalid differential base version")

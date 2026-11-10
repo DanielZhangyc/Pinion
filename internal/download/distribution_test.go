@@ -1,7 +1,6 @@
 package download
 
 import (
-	"context"
 	"encoding/json"
 	"maps"
 	"strings"
@@ -12,19 +11,15 @@ func TestDistributionRequests(t *testing.T) {
 	for _, tc := range []struct {
 		game                                          GameID
 		appcode, launcherAppcode, channel, subChannel string
-		differential                                  bool
 	}{
-		{Arknights, "GzD1CpaWgmSq1wew", "abYeZZ16BPluCFyT", "1", "1", true},
-		{ArknightsBilibili, "GzD1CpaWgmSq1wew", "Ae1Pa3Oi2PRHpLAP", "2", "2", false},
-		{Endfield, "6LL0KJuqHBVz33WK", "abYeZZ16BPluCFyT", "1", "1", true},
+		{Arknights, "GzD1CpaWgmSq1wew", "abYeZZ16BPluCFyT", "1", "1"},
+		{ArknightsBilibili, "GzD1CpaWgmSq1wew", "Ae1Pa3Oi2PRHpLAP", "2", "2"},
+		{Endfield, "6LL0KJuqHBVz33WK", "abYeZZ16BPluCFyT", "1", "1"},
 	} {
 		t.Run(string(tc.game), func(t *testing.T) {
 			d, err := distributionFor(tc.game)
 			if err != nil {
 				t.Fatal(err)
-			}
-			if d.differential != tc.differential {
-				t.Fatalf("differential = %v, want %v", d.differential, tc.differential)
 			}
 			for _, version := range []string{"", "78.0.0"} {
 				body, err := d.latestGameBody(version)
@@ -65,18 +60,6 @@ func TestUnknownDistributionRejected(t *testing.T) {
 			root.Close()
 			t.Fatalf("created directory for unknown game ID %q", game)
 		}
-	}
-}
-
-// A zero network budget proves the refusal happens before any official request.
-func TestBilibiliDifferentialDisabled(t *testing.T) {
-	m := New(t.TempDir())
-	m.client.Transport = &trafficTransport{base: m.client.Transport}
-	if _, _, err := m.officialPatch(context.Background(), ArknightsBilibili, "78.0.0"); err == nil || !strings.Contains(err.Error(), "not enabled") {
-		t.Fatalf("Bilibili patch request: %v", err)
-	}
-	if _, err := m.resolveDifferential(context.Background(), ArknightsBilibili, "78.0.0", ""); err == nil || !strings.Contains(err.Error(), "not enabled") {
-		t.Fatalf("Bilibili differential plan: %v", err)
 	}
 }
 
