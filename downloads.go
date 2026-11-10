@@ -289,7 +289,7 @@ func (d *downloads) run(ctx context.Context, cancel context.CancelFunc, game, di
 		})
 		return
 	}
-	lock, err := launch.LockForUpdate(download.GameID(game))
+	lock, err := launch.LockForUpdate(download.GameID(game), directory)
 	if err != nil {
 		d.finish(game, token, fmt.Errorf("无法开始安装，请确认游戏已退出：%w", err), download.Record{}, plan.Differential)
 		return
