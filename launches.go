@@ -38,6 +38,7 @@ var launchGames = []struct {
 	executable string
 }{
 	{download.Arknights, "明日方舟", "Arknights.exe"},
+	{download.ArknightsBilibili, "明日方舟（B 服）", "Arknights.exe"},
 	{download.Endfield, "明日方舟：终末地", "Endfield.exe"},
 }
 

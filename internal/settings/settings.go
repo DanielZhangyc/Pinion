@@ -14,6 +14,7 @@ import (
 
 type Settings struct {
 	DownloadDirectory string `json:"download_directory"`
+	ArknightsChannel  string `json:"arknights_channel,omitempty"`
 }
 
 type Store struct {

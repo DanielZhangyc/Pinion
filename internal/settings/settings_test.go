@@ -32,6 +32,13 @@ func TestSaveAndLoad(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("directory validation left files: %v, %v", entries, err)
 	}
+	if err := store.Save(Settings{DownloadDirectory: root, ArknightsChannel: "arknights-bilibili"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.Load()
+	if err != nil || got != (Settings{DownloadDirectory: root, ArknightsChannel: "arknights-bilibili"}) {
+		t.Fatalf("channel Load() = %+v, %v", got, err)
+	}
 	if err := store.Save(Settings{}); err != nil {
 		t.Fatal(err)
 	}
