@@ -16,7 +16,7 @@ import (
 
 func TestOwnedDirectory(t *testing.T) {
 	m := New(t.TempDir())
-	for _, game := range []GameID{Arknights, Endfield} {
+	for _, game := range []GameID{Arknights, ArknightsBilibili, Endfield} {
 		root, err := m.openGame(game, true)
 		if err != nil {
 			t.Fatalf("create empty %s directory: %v", game, err)
@@ -46,16 +46,16 @@ func TestOfficialDownloads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	m := New(t.TempDir())
-	traffic := &trafficTransport{base: m.client.Transport, limit: 20 << 20}
+	traffic := &trafficTransport{base: m.client.Transport, limit: 40 << 20}
 	m.client.Transport = traffic
-	for _, game := range []GameID{Arknights, Endfield} {
+	for _, game := range []GameID{Arknights, ArknightsBilibili, Endfield} {
 		t.Run(string(game), func(t *testing.T) {
 			plan, err := m.Resolve(ctx, game)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Logf("game=%s version=%s packs=%d download=%d expanded=%d manifest=%d files=%d", game, plan.Version, len(plan.Packs), plan.DownloadBytes, plan.UnpackedBytes, plan.ManifestBytes, len(plan.Files))
-			if game == Arknights {
+			if game != Endfield {
 				t.Run("manager_pause_and_resume", func(t *testing.T) {
 					installer := New(t.TempDir())
 					installer.client = m.client
@@ -222,6 +222,76 @@ func TestOfficialDownloads(t *testing.T) {
 		})
 	}
 	t.Logf("actual HTTP body bytes read=%d; maximum=%d", traffic.bytes, traffic.limit)
+}
+
+// This opt-in acceptance downloads, extracts and fully verifies one genuine
+// official game in a dedicated directory. Interrupted runs resume from the
+// retained packages; a repeated run re-verifies the completed installation.
+func TestOfficialFullInstall(t *testing.T) {
+	if os.Getenv("GRYPH_FULL_INSTALL_INTEGRATION") != "1" {
+		t.Skip("set GRYPH_FULL_INSTALL_INTEGRATION=1, GRYPH_FULL_INSTALL_GAME and GRYPH_DOWNLOAD_ROOT for a complete official installation")
+	}
+	game := GameID(os.Getenv("GRYPH_FULL_INSTALL_GAME"))
+	root := os.Getenv("GRYPH_DOWNLOAD_ROOT")
+	if !filepath.IsAbs(root) {
+		t.Fatal("GRYPH_DOWNLOAD_ROOT must identify a dedicated absolute download directory")
+	}
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(root)
+	defer m.client.CloseIdleConnections()
+	plan, err := m.Resolve(t.Context(), game)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("game=%s version=%s download=%d expanded=%d files=%d", game, plan.Version, plan.DownloadBytes, plan.UnpackedBytes, len(plan.Files))
+	var stage string
+	var logged int64
+	started := time.Now()
+	record, err := m.Install(t.Context(), plan, func(p Progress) {
+		if p.Stage != stage || p.DoneBytes-logged >= 1<<30 {
+			stage, logged = p.Stage, p.DoneBytes
+			t.Logf("%s %d/%d bytes after %s", p.Stage, p.DoneBytes, p.TotalBytes, time.Since(started).Round(time.Second))
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := New(root)
+	defer reopened.client.CloseIdleConnections()
+	loaded, err := reopened.LoadRecord(game)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Game != game || loaded.Version != plan.Version || loaded.ManifestMD5 != plan.ManifestMD5 ||
+		loaded.Directory != record.Directory || !loaded.CompletedAt.Equal(record.CompletedAt) {
+		t.Fatalf("reloaded record %+v, installed %+v", loaded, record)
+	}
+	if rel, err := filepath.Rel(root, loaded.Directory); err != nil || !strings.HasPrefix(rel, string(game)+"/versions/") {
+		t.Fatalf("record directory %s is outside %s: %v", loaded.Directory, game, err)
+	}
+	update, err := reopened.ResolveUpdate(t.Context(), game)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if game == ArknightsBilibili && update.Differential {
+		t.Fatal("Bilibili update resolved a differential plan")
+	}
+	if update.Version == loaded.Version && update.ManifestMD5 == loaded.ManifestMD5 {
+		again, err := reopened.Install(t.Context(), update, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if again.Directory != loaded.Directory || !again.CompletedAt.Equal(loaded.CompletedAt) {
+			t.Fatalf("current installation was not reused: %+v", again)
+		}
+	}
+	t.Logf("installed %s %s at %s in %s; reopened record verified", game, loaded.Version, loaded.Directory, time.Since(started).Round(time.Second))
 }
 
 type trafficTransport struct {
