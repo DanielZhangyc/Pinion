@@ -224,6 +224,8 @@ func TestOfficialDownloads(t *testing.T) {
 	t.Logf("actual HTTP body bytes read=%d; maximum=%d", traffic.bytes, traffic.limit)
 }
 
+const fullInstallMarker = ".pinion-full-install-acceptance"
+
 // This opt-in acceptance downloads, extracts and fully verifies one genuine
 // official game in a dedicated directory. Interrupted runs resume from the
 // retained packages; a repeated run re-verifies the completed installation.
@@ -242,6 +244,22 @@ func TestOfficialFullInstall(t *testing.T) {
 	root, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Only an empty directory is initialized, and only a directory carrying the
+	// acceptance marker is resumed, so a real download root is never used.
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, fullInstallMarker)
+	if len(entries) == 0 {
+		if err := os.WriteFile(marker, []byte(fullInstallMarker+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	} else if info, err := os.Lstat(marker); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("%s is neither empty nor a marked acceptance directory: %v", root, err)
+	} else if data, err := os.ReadFile(marker); err != nil || string(data) != fullInstallMarker+"\n" {
+		t.Fatalf("acceptance marker mismatch in %s: %v", root, err)
 	}
 	m := New(root)
 	defer m.client.CloseIdleConnections()
