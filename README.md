@@ -3,6 +3,9 @@
 </p>
 <h1 align="center">Pinion</h1>
 <p align="center">为 macOS 设计的鹰角游戏启动器</p>
+<p align="center">
+  <a href="https://awesomemygo.dev/apps/pinion"><img src="https://awesomemygo.dev/badge.svg" alt="Listed on Awesome MyGo"></a>
+</p>
 
 Pinion 是面向 Apple Silicon Mac 的非官方启动器，目前支持《明日方舟》和《明日方舟：终末地》的国服官方 Windows 客户端。
 
