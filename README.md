@@ -3,6 +3,9 @@
 </p>
 <h1 align="center">Pinion</h1>
 <p align="center">为 macOS 设计的鹰角游戏启动器</p>
+<p align="center">
+  <a href="https://awesomemygo.dev/apps/pinion"><img src="https://awesomemygo.dev/badge.svg" alt="Listed on Awesome MyGo"></a>
+</p>
 
 Pinion 是面向 Apple Silicon Mac 的非官方启动器，目前支持《明日方舟》（官服与 B 服）和《明日方舟：终末地》的国服官方 Windows 客户端。
 
@@ -81,9 +84,9 @@ Pinion 启动时会自动检查 [GitHub Release](https://github.com/DanielZhangy
 
 可以。两个渠道分别安装在下载目录的 `arknights` 和 `arknights-bilibili` 中，使用各自的游戏容器和登录状态；一个渠道运行时，不影响另一个渠道更新。B 服使用游戏内的 B 站账号登录。
 
-**B 服登录窗口被全屏游戏遮住怎么办？**
+**没看到B 服登录窗口怎么办？**
 
-可通过调度中心或 `⌘Tab` 切换到 B 站登录窗口，完成登录后再返回游戏。首次登录或登录状态失效时可能出现此情况。
+可通过三指上滑打开调度中心或 `⌘ + Tab` 切换到 B 站登录窗口，完成登录后再返回游戏。首次登录或登录状态失效时可能出现此情况。
 
 **下载中断需要重下吗？**
 

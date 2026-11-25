@@ -69,7 +69,11 @@ func TestOfficialDifferentialPlans(t *testing.T) {
 	for _, tc := range []struct {
 		game GameID
 		old  string
-	}{{Arknights, "78.0.0"}, {ArknightsBilibili, "78.0.0"}, {Endfield, "1.6.3"}} {
+	}{
+		{Arknights, "78.0.0"},
+		{ArknightsBilibili, "78.0.0"},
+		{Endfield, "1.6.4"},
+	} {
 		t.Run(string(tc.game), func(t *testing.T) {
 			p, err := m.resolveDifferential(ctx, tc.game, tc.old, "")
 			if err != nil {
@@ -79,7 +83,7 @@ func TestOfficialDifferentialPlans(t *testing.T) {
 				t.Fatalf("unexpected official differential plan: %+v", p)
 			}
 			t.Logf("%s %s→%s: target=%d files, operations=%d, download=%d, target bytes=%d, required=%d", tc.game, tc.old, p.Version, len(p.Files), len(p.patch.recipes), p.DownloadBytes, p.UnpackedBytes, p.RequiredBytes)
-			if tc.game != Endfield {
+			if p.DownloadBytes > 4<<20 {
 				// Bounded protocol research validates the archive's small metadata
 				// entries by their AES authentication. Install separately requires
 				// every complete volume's MD5 before opening any encrypted entry.
@@ -247,9 +251,144 @@ func checkWrittenOfficialSidecars(t *testing.T, ctx context.Context, root *os.Ro
 		}
 	} else {
 		files, err := decodeManifest(gameFiles)
-		if err != nil || len(files) != 1688 {
-			t.Fatalf("official Endfield game_files artifact: %d files: %v", len(files), err)
+		if err != nil || len(files) != len(p.Files) {
+			t.Fatalf("official Endfield game_files artifact: %d files (want %d): %v", len(files), len(p.Files), err)
 		}
 	}
 	t.Logf("official sidecars retain archive game_files=%d bytes, complete target-game_files=%d bytes (%d target entries)", len(gameFiles), len(manifest), len(p.Files))
+}
+
+func TestParseV2PatchBasePaths(t *testing.T) {
+	const (
+		md5A = "0123456789abcdef0123456789abcdef"
+		md5B = "fedcba9876543210fedcba9876543210"
+		md5C = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		md5D = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+	t.Run("empty_vfs_base_path", func(t *testing.T) {
+		info := []byte(`{
+			"version": "1.7.2",
+			"vfs_base_path": "",
+			"files": [
+				{
+					"name": "Endfield_Data/StreamingAssets/VFS/unchanged.chk",
+					"name_path": "",
+					"md5": "` + md5A + `",
+					"size": 100,
+					"diffType": 1
+				},
+				{
+					"name": "Endfield_Data/StreamingAssets/VFS/replaced.chk",
+					"name_path": "",
+					"md5": "` + md5B + `",
+					"size": 200,
+					"diffType": 2,
+					"local_path": "vfs_files/files/Endfield_Data/StreamingAssets/VFS/replaced.chk"
+				},
+				{
+					"name": "Endfield_Data/StreamingAssets/VFS/patched.chk",
+					"name_path": "",
+					"md5": "` + md5C + `",
+					"size": 300,
+					"diffType": 1,
+					"patch": [{
+						"base_file": "Endfield_Data/StreamingAssets/VFS/old.chk",
+						"base_file_path": "",
+						"base_md5": "` + md5D + `",
+						"base_size": 250,
+						"patch": "diff_1.7.2_1.6.4/patched.chk_patch",
+						"patch_path": "",
+						"patch_size": 40
+					}]
+				}
+			]
+		}`)
+		target := map[string]File{
+			"Endfield_Data/StreamingAssets/VFS/unchanged.chk": {Path: "Endfield_Data/StreamingAssets/VFS/unchanged.chk", MD5: md5A, Size: 100},
+			"Endfield_Data/StreamingAssets/VFS/replaced.chk":  {Path: "Endfield_Data/StreamingAssets/VFS/replaced.chk", MD5: md5B, Size: 200},
+			"Endfield_Data/StreamingAssets/VFS/patched.chk":   {Path: "Endfield_Data/StreamingAssets/VFS/patched.chk", MD5: md5C, Size: 300},
+		}
+		archive := map[string]archiveItem{
+			"vfs_files/files/Endfield_Data/StreamingAssets/VFS/replaced.chk": {name: "vfs_files/files/Endfield_Data/StreamingAssets/VFS/replaced.chk", size: 200},
+			"vfs_files/vfs_patch/diff_1.7.2_1.6.4/patched.chk_patch":         {name: "vfs_files/vfs_patch/diff_1.7.2_1.6.4/patched.chk_patch", size: 40},
+		}
+		pp := &patchPlan{recipes: map[string]patchRecipe{}}
+		if err := parseV2Patch(info, "1.7.2", target, archive, pp); err != nil {
+			t.Fatalf("parseV2Patch with empty vfs_base_path: %v", err)
+		}
+		if len(pp.recipes) != 2 {
+			t.Fatalf("expected 2 recipes, got %d: %+v", len(pp.recipes), pp.recipes)
+		}
+		if got := pp.recipes["Endfield_Data/StreamingAssets/VFS/replaced.chk"]; got != (patchRecipe{archive: "vfs_files/files/Endfield_Data/StreamingAssets/VFS/replaced.chk"}) {
+			t.Fatalf("unexpected replacement recipe: %+v", got)
+		}
+		wantPatch := patchRecipe{
+			archive:  "vfs_files/vfs_patch/diff_1.7.2_1.6.4/patched.chk_patch",
+			source:   "Endfield_Data/StreamingAssets/VFS/old.chk",
+			baseMD5:  md5D,
+			baseSize: 250,
+		}
+		if got := pp.recipes["Endfield_Data/StreamingAssets/VFS/patched.chk"]; got != wantPatch {
+			t.Fatalf("unexpected patch recipe: got %+v, want %+v", got, wantPatch)
+		}
+	})
+
+	t.Run("nonempty_vfs_base_path", func(t *testing.T) {
+		info := []byte(`{
+			"version": "79.0.0",
+			"vfs_base_path": "Arknights_Data/StreamingAssets/AB/Windows",
+			"files": [{
+				"name": "arts/item.ab",
+				"name_path": "",
+				"md5": "` + md5C + `",
+				"size": 300,
+				"diffType": 1,
+				"patch": [{
+					"base_file": "arts/item_old.ab",
+					"base_file_path": "",
+					"base_md5": "` + md5D + `",
+					"base_size": 250,
+					"patch": "arts/item.ab_patch",
+					"patch_path": "",
+					"patch_size": 40
+				}]
+			}]
+		}`)
+		target := map[string]File{
+			"Arknights_Data/StreamingAssets/AB/Windows/arts/item.ab": {Path: "Arknights_Data/StreamingAssets/AB/Windows/arts/item.ab", MD5: md5C, Size: 300},
+		}
+		archive := map[string]archiveItem{
+			"vfs_files/vfs_patch/arts/item.ab_patch": {name: "vfs_files/vfs_patch/arts/item.ab_patch", size: 40},
+		}
+		pp := &patchPlan{recipes: map[string]patchRecipe{}}
+		if err := parseV2Patch(info, "79.0.0", target, archive, pp); err != nil {
+			t.Fatalf("parseV2Patch with non-empty vfs_base_path: %v", err)
+		}
+		wantPatch := patchRecipe{
+			archive:  "vfs_files/vfs_patch/arts/item.ab_patch",
+			source:   "Arknights_Data/StreamingAssets/AB/Windows/arts/item_old.ab",
+			baseMD5:  md5D,
+			baseSize: 250,
+		}
+		if got := pp.recipes["Arknights_Data/StreamingAssets/AB/Windows/arts/item.ab"]; got != wantPatch {
+			t.Fatalf("unexpected patch recipe: got %+v, want %+v", got, wantPatch)
+		}
+	})
+
+	for _, badBase := range []string{".", "..", "../escape", "/abs/path"} {
+		t.Run("reject_unsafe_base_"+badBase, func(t *testing.T) {
+			info, err := json.Marshal(map[string]any{
+				"version":       "1.7.2",
+				"vfs_base_path": badBase,
+				"files":         []any{},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pp := &patchPlan{recipes: map[string]patchRecipe{}}
+			if err := parseV2Patch(info, "1.7.2", map[string]File{}, map[string]archiveItem{}, pp); err == nil {
+				t.Fatalf("accepted unsafe vfs_base_path %q", badBase)
+			}
+		})
+	}
 }
