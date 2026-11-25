@@ -389,18 +389,24 @@ func parseV2Patch(data []byte, version string, target map[string]File, archive m
 	if info.Version != version {
 		return errors.New("v2 patch version mismatch")
 	}
-	if _, err := safeName(info.Base); err != nil {
-		return err
+	base := ""
+	if info.Base != "" {
+		var err error
+		base, err = safeName(info.Base)
+		if err != nil {
+			return err
+		}
 	}
 	seen := map[string]bool{}
 	for _, f := range info.Files {
 		if f.NamePath != "" || (f.DiffType != 1 && f.DiffType != 2) {
 			return errors.New("unsupported v2 patch path or diffType")
 		}
-		if _, err := safeName(f.Name); err != nil {
+		fileName, err := safeName(f.Name)
+		if err != nil {
 			return err
 		}
-		name := path.Join(info.Base, f.Name)
+		name := path.Join(base, fileName)
 		t, ok := target[name]
 		if !ok || t.Size != f.Size || t.MD5 != f.MD5 {
 			return fmt.Errorf("v2 target disagrees with full manifest: %q", name)
@@ -413,14 +419,15 @@ func parseV2Patch(data []byte, version string, target map[string]File, archive m
 			return errors.New("ambiguous v2 patch operation")
 		}
 		if f.Local != "" {
-			if _, err := safeName(f.Local); err != nil {
+			localPath, err := safeName(f.Local)
+			if err != nil {
 				return err
 			}
-			a, ok := archive[f.Local]
+			a, ok := archive[localPath]
 			if !ok || a.dir || a.size != f.Size {
 				return fmt.Errorf("missing v2 replacement %q", f.Local)
 			}
-			pp.recipes[name] = patchRecipe{archive: f.Local}
+			pp.recipes[name] = patchRecipe{archive: localPath}
 		} else if len(f.Patch) > 0 {
 			if len(f.Patch) != 1 {
 				return errors.New("unsupported multiple v2 patch bases")
@@ -429,18 +436,20 @@ func parseV2Patch(data []byte, version string, target map[string]File, archive m
 			if d.BasePath != "" || d.PatchPath != "" || !validMD5(d.BaseMD5) || d.BaseSize < 0 || d.BaseSize > 1<<40 || d.PatchSize < 0 {
 				return errors.New("unsupported v2 patch base")
 			}
-			if _, err := safeName(d.BaseFile); err != nil {
+			baseFile, err := safeName(d.BaseFile)
+			if err != nil {
 				return err
 			}
-			if _, err := safeName(d.Patch); err != nil {
+			patchFile, err := safeName(d.Patch)
+			if err != nil {
 				return err
 			}
-			aName := path.Join("vfs_files/vfs_patch", d.Patch)
+			aName := path.Join("vfs_files/vfs_patch", patchFile)
 			a, ok := archive[aName]
 			if !ok || a.dir || a.size != d.PatchSize {
 				return fmt.Errorf("missing v2 binary patch %q", aName)
 			}
-			pp.recipes[name] = patchRecipe{aName, path.Join(info.Base, d.BaseFile), d.BaseMD5, d.BaseSize}
+			pp.recipes[name] = patchRecipe{aName, path.Join(base, baseFile), d.BaseMD5, d.BaseSize}
 		}
 	}
 	return nil
