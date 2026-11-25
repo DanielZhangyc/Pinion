@@ -123,7 +123,10 @@ func busy(snapshot gamewatch.Snapshot, p gameProfile, downloadRoot string) (bool
 	if inside {
 		return true, nil
 	}
-	return false, errors.Join(mainErr, insideErr)
+	if mainErr != nil {
+		return false, mainErr
+	}
+	return false, insideErr
 }
 
 func lockIdleGame(p gameProfile, downloadRoot string) (*os.File, error) {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"pinion/internal/download"
@@ -242,6 +243,20 @@ func TestDistributionProcessAttribution(t *testing.T) {
 		start(t, filepath.Join(t.TempDir(), "Arknights.exe"))
 		expect(t, map[download.GameID]bool{download.Arknights: true, download.ArknightsBilibili: true, download.Endfield: false})
 	})
+}
+
+func TestBusyDoesNotDuplicateSnapshotError(t *testing.T) {
+	p, err := profile(download.ArknightsBilibili)
+	if err != nil {
+		t.Fatal(err)
+	}
+	occupied, err := busy(gamewatch.Snapshot{}, p, t.TempDir())
+	if occupied || err == nil {
+		t.Fatalf("busy(uncaptured) = %t, %v; want false, non-nil error", occupied, err)
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("busy duplicated snapshot error: %q", err)
+	}
 }
 
 func TestProcessChild(t *testing.T) {
