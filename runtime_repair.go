@@ -53,7 +53,8 @@ func repairRuntimeLaunchCache(ctx context.Context) (result wine.CacheRepairResul
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		lock, err := launch.LockForUpdate(game.id)
+		// The shared cache needs every game idle wherever it was installed.
+		lock, err := launch.LockForUpdate(game.id, "")
 		if err != nil {
 			return result, fmt.Errorf("请先退出游戏并等待更新结束，再重试修复：%w", err)
 		}

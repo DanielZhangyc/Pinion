@@ -17,7 +17,7 @@ func (a *App) runtimeRepairBlocked() string {
 	if a.runtime.Stage != "ready" {
 		return "请先完成运行环境准备。"
 	}
-	for _, game := range []string{"arknights", "endfield"} {
+	for _, game := range []string{"arknights", "arknights-bilibili", "endfield"} {
 		if a.GameBusy(game) {
 			return "请先退出游戏，再修复启动环境。"
 		}

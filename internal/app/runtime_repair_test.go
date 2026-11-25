@@ -29,7 +29,7 @@ func TestRuntimeRepairEntryAndLaunchExclusion(t *testing.T) {
 				t.Fatal("repair started before runtime setup completed")
 			}
 			a.SetRuntime(RuntimeState{Stage: "ready"})
-			for _, game := range []string{"arknights", "endfield"} {
+			for _, game := range []string{"arknights", "arknights-bilibili", "endfield"} {
 				a.SetLaunch(game, LaunchState{Stage: "running"})
 				view.Frame()
 				if err := view.Click("修复启动环境"); err != nil {

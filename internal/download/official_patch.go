@@ -82,14 +82,14 @@ func (m *Manager) ResolveUpdate(ctx context.Context, game GameID) (Plan, error) 
 
 func (m *Manager) officialPatch(ctx context.Context, game GameID, oldVersion string) (Plan, *patchDescriptor, error) {
 	p := Plan{Game: game}
-	code, err := appcode(game)
+	d, err := distributionFor(game)
 	if err != nil {
 		return p, nil, err
 	}
 	if !validVersion(oldVersion) {
 		return p, nil, errors.New("invalid differential base version")
 	}
-	body, err := json.Marshal(map[string]any{"seq": "5", "proxy_reqs": []any{map[string]any{"kind": "get_latest_game", "get_latest_game_req": map[string]string{"appcode": code, "launcher_appcode": "abYeZZ16BPluCFyT", "channel": "1", "sub_channel": "1", "version": oldVersion}}}})
+	body, err := d.latestGameBody(oldVersion)
 	if err != nil {
 		return p, nil, err
 	}

@@ -3,18 +3,44 @@
 package gamewatch
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
 )
+
+// These are resolver decision inputs, separate from the real Darwin ABI tests.
+// A loader path cannot establish absence when its argv could not be read.
+func TestProgramArgumentFailure(t *testing.T) {
+	for _, executable := range []string{
+		"/tmp/winetemp/explorer.exe", "/tmp/winetemp/PCGamePlatform.exe", "/runtime/bin/wine",
+	} {
+		program, err := programFromArguments(executable, nil, syscall.EPERM, "Arknights.exe")
+		if program != "" || !errors.Is(err, syscall.EPERM) {
+			t.Fatalf("unresolved %s: program=%q error=%v", executable, program, err)
+		}
+	}
+	for _, executable := range []string{"/games/Arknights.exe", "/games/Endfield.exe"} {
+		program, err := programFromArguments(executable, nil, syscall.EPERM)
+		if program != executable || err != nil {
+			t.Fatalf("known main executable %s: program=%q error=%v", executable, program, err)
+		}
+	}
+	// Explicit callers can query a helper, but unrelated PE paths remain unknown.
+	program, err := programFromArguments("/games/PCGamePlatform.exe", nil, syscall.EPERM, "PCGamePlatform.exe")
+	if program != "/games/PCGamePlatform.exe" || err != nil {
+		t.Fatalf("known caller executable: program=%q error=%v", program, err)
+	}
+}
 
 func TestCurrentUIDProcessIDs(t *testing.T) {
 	if err := loadNative(); err != nil {
@@ -183,6 +209,80 @@ func TestSharedSnapshotTracksRealProcesses(t *testing.T) {
 	}
 	if running, err := Running(path); err != nil || running {
 		t.Fatalf("immediate check reused stale state: running=%t error=%v", running, err)
+	}
+}
+
+func TestHostPath(t *testing.T) {
+	for program, want := range map[string]string{
+		"/Users/a/arknights-bilibili/versions/79.0.0/game/Arknights.exe":         "/Users/a/arknights-bilibili/versions/79.0.0/game/Arknights.exe",
+		`Z:\Users\a\arknights-bilibili\versions\79.0.0\game\PlatformProcess.exe`: "/Users/a/arknights-bilibili/versions/79.0.0/game/PlatformProcess.exe",
+		`z:/Users/a/../b/Arknights.exe`:                                          "/Users/b/Arknights.exe",
+		`C:\GryphEndfield\Endfield.exe`:                                          "",
+		`Arknights.exe`:                                                          "",
+	} {
+		if got := hostPath(program); got != want {
+			t.Errorf("hostPath(%q) = %q, want %q", program, got, want)
+		}
+	}
+	if within("/Users/a/arknights-bilibili/x.exe", "/Users/a/arknights") || !within("/Users/A/Arknights/x.exe", "/users/a/arknights/") {
+		t.Fatal("directory containment must be component-wise and case-insensitive")
+	}
+}
+
+// A genuine helper process runs under a PE name from a chosen directory, as
+// Wine helpers do. Queries must attribute it only to that directory.
+func TestSnapshotProgramDirectories(t *testing.T) {
+	program, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	install, other := t.TempDir(), t.TempDir()
+	path := filepath.Join(install, "game", "Helper.exe")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, program, 0700); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(path, "-test.run=^TestSnapshotChild$")
+	child.Env = append(os.Environ(), "GRYPH_SNAPSHOT_CHILD=1")
+	input, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	t.Cleanup(func() {
+		if !waited {
+			input.Close()
+			child.Wait()
+		}
+	})
+	snapshot := Capture()
+	if running, err := snapshot.RunningIn(install); err != nil || !running {
+		t.Fatalf("helper in its directory: running=%t error=%v", running, err)
+	}
+	if running, err := snapshot.RunningIn(other); err != nil || running {
+		t.Fatalf("helper in another directory: running=%t error=%v", running, err)
+	}
+	if running, err := snapshot.RunningOutside("Helper.exe", other, install); err != nil || running {
+		t.Fatalf("helper inside a known directory reported outside: running=%t error=%v", running, err)
+	}
+	if running, err := snapshot.RunningOutside("Helper.exe", other); err != nil || !running {
+		t.Fatalf("helper outside the given directory: running=%t error=%v", running, err)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = child.Wait()
+	waited = true
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running, err := Capture().RunningIn(install); err != nil || running {
+		t.Fatalf("exited helper retained: running=%t error=%v", running, err)
 	}
 }
 

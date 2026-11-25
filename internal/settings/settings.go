@@ -14,6 +14,7 @@ import (
 
 type Settings struct {
 	DownloadDirectory string `json:"download_directory"`
+	ArknightsChannel  string `json:"arknights_channel,omitempty"`
 }
 
 type Store struct {
@@ -91,6 +92,21 @@ func (s *Store) Save(settings Settings) error {
 		}
 		settings.DownloadDirectory = directory
 	}
+	return s.save(settings)
+}
+
+// UpdateArknightsChannel preserves the saved directory even if its disk is
+// disconnected. Callers serialize this read-modify-write with other writers.
+func (s *Store) UpdateArknightsChannel(game string) error {
+	prefs, err := s.Load()
+	if err != nil {
+		return err
+	}
+	prefs.ArknightsChannel = game
+	return s.save(prefs)
+}
+
+func (s *Store) save(settings Settings) error {
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode settings: %w", err)

@@ -7,7 +7,7 @@
   <a href="https://awesomemygo.dev/apps/pinion"><img src="https://awesomemygo.dev/badge.svg" alt="Listed on Awesome MyGo"></a>
 </p>
 
-Pinion 是面向 Apple Silicon Mac 的非官方启动器，目前支持《明日方舟》和《明日方舟：终末地》的国服官方 Windows 客户端。
+Pinion 是面向 Apple Silicon Mac 的非官方启动器，目前支持《明日方舟》（官服与 B 服）和《明日方舟：终末地》的国服官方 Windows 客户端。
 
 ## 目录
 
@@ -40,7 +40,7 @@ xattr -dr com.apple.quarantine /Applications/Pinion.app
 ```
 
 1. 首次打开，等待内置 FineWine 运行环境自动准备完成。缺少 Rosetta 时，按应用提示安装。
-2. 在设置中选择游戏下载目录，进入游戏页下载所需游戏。
+2. 在设置中选择游戏下载目录，进入游戏页下载所需游戏。明日方舟可在游戏页切换官服或 B 服。
 3. 下载完成后点击“启动游戏”。首次启动会自动创建容器；终末地还会联网准备官方启动组件。
 
 Pinion 启动时会自动检查 [GitHub Release](https://github.com/DanielZhangyc/Pinion/releases) 中的稳定版更新，也可在设置中手动检查；发现新版后可打开发布页下载安装包。
@@ -59,7 +59,8 @@ Pinion 启动时会自动检查 [GitHub Release](https://github.com/DanielZhangy
 - [x] 内置 FineWine 与首次运行自动配置
 - [x] 安装包发布与启动器更新检查
 - [x] 游戏更新自动检查、官方差分更新与完整更新安装
-- [ ] B 服 / 国际服
+- [x] 明日方舟 B 服
+- [ ] 国际服
 - [ ] 泡姆泡姆
 - [ ] MAA 支持（后续 fork MAA）
 - [ ] Mod 加载支持
@@ -70,7 +71,7 @@ Pinion 启动时会自动检查 [GitHub Release](https://github.com/DanielZhangy
 
 | 游戏 | 图形路径 |
 | --- | --- |
-| 明日方舟 | D3D11 → DXMT → Metal |
+| 明日方舟（官服 / B 服） | D3D11 → DXMT → Metal |
 | 明日方舟：终末地 | Vulkan → MoltenVK → Metal |
 
 ## 常见问题
@@ -78,6 +79,14 @@ Pinion 启动时会自动检查 [GitHub Release](https://github.com/DanielZhangy
 **能复用已有游戏吗？**
 
 可在设置中选择已有的 Pinion 下载根目录。暂不支持导入其他启动器的安装，也不支持接管现有 Wine / CrossOver 容器。
+
+**明日方舟官服和 B 服可以同时安装吗？**
+
+可以。两个渠道分别安装在下载目录的 `arknights` 和 `arknights-bilibili` 中，使用各自的游戏容器和登录状态；一个渠道运行时，不影响另一个渠道更新。B 服使用游戏内的 B 站账号登录。
+
+**没看到B 服登录窗口怎么办？**
+
+可通过三指上滑打开调度中心或 `⌘ + Tab` 切换到 B 站登录窗口，完成登录后再返回游戏。首次登录或登录状态失效时可能出现此情况。
 
 **下载中断需要重下吗？**
 

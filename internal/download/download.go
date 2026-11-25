@@ -29,18 +29,14 @@ import (
 	"time"
 )
 
-type GameID string
-
 const (
-	Arknights        GameID = "arknights"
-	Endfield         GameID = "endfield"
-	StagePreparing          = "preparing"
-	StageDownloading        = "downloading"
-	StageExtracting         = "extracting"
-	StageVerifying          = "verifying"
-	StageCompleted          = "completed"
-	apiURL                  = "https://launcher.hypergryph.com/api/proxy/batch_proxy"
-	metadataLimit    int64  = 16 << 20
+	StagePreparing         = "preparing"
+	StageDownloading       = "downloading"
+	StageExtracting        = "extracting"
+	StageVerifying         = "verifying"
+	StageCompleted         = "completed"
+	apiURL                 = "https://launcher.hypergryph.com/api/proxy/batch_proxy"
+	metadataLimit    int64 = 16 << 20
 )
 
 type Pack struct {
@@ -118,17 +114,6 @@ func New(root string) *Manager {
 	}}}
 }
 
-func appcode(game GameID) (string, error) {
-	switch game {
-	case Arknights:
-		return "GzD1CpaWgmSq1wew", nil
-	case Endfield:
-		return "6LL0KJuqHBVz33WK", nil
-	default:
-		return "", fmt.Errorf("unknown game ID %q", game)
-	}
-}
-
 func checkURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -177,15 +162,11 @@ func (m *Manager) latestPackage(ctx context.Context, game GameID) (Plan, error) 
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	plan := Plan{Game: game}
-	code, err := appcode(game)
+	d, err := distributionFor(game)
 	if err != nil {
 		return plan, err
 	}
-	body, err := json.Marshal(map[string]any{"seq": "5", "proxy_reqs": []any{map[string]any{
-		"kind": "get_latest_game", "get_latest_game_req": map[string]string{
-			"appcode": code, "launcher_appcode": "abYeZZ16BPluCFyT", "channel": "1", "sub_channel": "1", "version": "",
-		},
-	}}})
+	body, err := d.latestGameBody("")
 	if err != nil {
 		return plan, err
 	}
@@ -284,7 +265,7 @@ func (m *Manager) Resolve(ctx context.Context, game GameID) (Plan, error) {
 }
 
 func (p Plan) validate(full bool) error {
-	if _, err := appcode(p.Game); err != nil {
+	if _, err := distributionFor(p.Game); err != nil {
 		return err
 	}
 	if !validVersion(p.Version) || !validMD5(p.ManifestMD5) || len(p.Packs) == 0 {
@@ -419,7 +400,7 @@ func inspectArchive(zr *zip.Reader) (int64, error) {
 // openGame creates only a dedicated launcher-owned game directory. Existing
 // nonempty directories without its ownership marker are never adopted.
 func (m *Manager) openGame(game GameID, create bool) (*os.Root, error) {
-	if _, err := appcode(game); err != nil {
+	if _, err := distributionFor(game); err != nil {
 		return nil, err
 	}
 	if m.root == "" {

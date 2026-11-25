@@ -32,6 +32,13 @@ func TestSaveAndLoad(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("directory validation left files: %v, %v", entries, err)
 	}
+	if err := store.Save(Settings{DownloadDirectory: root, ArknightsChannel: "arknights-bilibili"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.Load()
+	if err != nil || got != (Settings{DownloadDirectory: root, ArknightsChannel: "arknights-bilibili"}) {
+		t.Fatalf("channel Load() = %+v, %v", got, err)
+	}
 	if err := store.Save(Settings{}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +120,41 @@ func TestInvalidSavePreservesSettings(t *testing.T) {
 	got, err := store.Load()
 	if err != nil || got.DownloadDirectory != root {
 		t.Fatalf("failed Save changed settings: %+v, %v", got, err)
+	}
+}
+
+func TestUpdateChannelWithDisconnectedDirectory(t *testing.T) {
+	store := New(filepath.Join(t.TempDir(), "settings.json"))
+	root := filepath.Join(t.TempDir(), "downloads")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(Settings{DownloadDirectory: root}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(root, root+"-offline"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateArknightsChannel("arknights-bilibili"); err != nil {
+		t.Fatal(err)
+	}
+	want := Settings{DownloadDirectory: root, ArknightsChannel: "arknights-bilibili"}
+	if got, err := store.Load(); err != nil || got != want {
+		t.Fatalf("Load() = %+v, %v; want %+v", got, err, want)
+	}
+}
+
+func TestUpdateChannelPreservesCorruptSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	const malformed = `{"download_directory":`
+	if err := os.WriteFile(path, []byte(malformed), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(path).UpdateArknightsChannel("arknights-bilibili"); err == nil {
+		t.Fatal("channel write accepted corrupt settings")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != malformed {
+		t.Fatalf("failed channel write changed settings: %q, %v", data, err)
 	}
 }
 

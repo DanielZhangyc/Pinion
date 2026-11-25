@@ -28,11 +28,53 @@ func (a *App) SetDownloadDirectory(path string, busy bool, err error) {
 	}
 }
 
-func (a *App) selectedGame() string {
-	if a.page == arknights {
-		return "arknights"
+// Arknights channels share one page; the segmented control's index selects one.
+var arknightsChannels = []string{"arknights", "arknights-bilibili"}
+
+func (a *App) OnSelectChannel(fn func(string)) { a.onSelectChannel = fn }
+
+func (a *App) SetChannelSaveError(err error) {
+	a.channelSaveError = ""
+	if err != nil {
+		a.channelSaveError = err.Error()
 	}
-	return "endfield"
+}
+
+// SetArknightsChannel restores a saved channel; unknown values select official.
+func (a *App) SetArknightsChannel(game string) {
+	a.arknightsChannel = 0
+	for i, channel := range arknightsChannels {
+		if channel == game {
+			a.arknightsChannel = i
+		}
+	}
+}
+
+// SelectedGame is the game whose download and launch state the page shows.
+func (a *App) SelectedGame() string { return a.selectedGame() }
+
+func (a *App) selectedGame() string {
+	switch a.page {
+	case arknights:
+		return arknightsChannels[max(0, min(a.arknightsChannel, len(arknightsChannels)-1))]
+	case endfield:
+		return "endfield"
+	default:
+		return ""
+	}
+}
+
+func (a *App) channelSelector(c *ui.Context) {
+	ui.Segmented(c.Key("arknights-channel"), &a.arknightsChannel, "官服", "B 服").Label("游戏渠道").AlignSelf(ui.Start).
+		OnChange(func() {
+			if a.onSelectChannel != nil {
+				a.onSelectChannel(a.selectedGame())
+			}
+		})
+	if a.channelSaveError != "" {
+		message := ui.Text(c, "渠道选择未保存，重启后可能恢复原选择").FontSize(fontSmall).TextColor(c.Theme().Danger)
+		tooltip(c, message, a.channelSaveError)
+	}
 }
 
 func (a *App) downloadDetails(c *ui.Context) {
