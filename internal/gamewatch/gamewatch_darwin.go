@@ -263,12 +263,19 @@ func programPID(pid int32, errno *int32, executables ...string) (string, error) 
 	// proc_pidpath names Wine's loader or a bundle in its winetemp directory
 	// (observed as wine.app and as explorer.exe), so argv identifies the program.
 	args, err := processArguments(pid, errno)
+	return programFromArguments(executable, args, err, executables...)
+}
+
+// programFromArguments resolves the PE program, retaining an argv error unless
+// the kernel path itself already identifies a caller-selected executable.
+func programFromArguments(executable string, args []string, err error, executables ...string) (string, error) {
 	if err != nil {
-		if isProgram(executable) {
+		if isGame(executable, executables...) {
 			return executable, nil
 		}
 		return "", err
 	}
+	isProgram := func(path string) bool { return isPE(path) || isGame(path, executables...) }
 	// Match the PE program, not its arguments. A preloader may retain both
 	// its own argv[0] and the Wine loader before the actual PE executable.
 	for i, arg := range args {

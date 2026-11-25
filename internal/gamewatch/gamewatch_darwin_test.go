@@ -3,18 +3,44 @@
 package gamewatch
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
 )
+
+// These are resolver decision inputs, separate from the real Darwin ABI tests.
+// A loader path cannot establish absence when its argv could not be read.
+func TestProgramArgumentFailure(t *testing.T) {
+	for _, executable := range []string{
+		"/tmp/winetemp/explorer.exe", "/tmp/winetemp/PCGamePlatform.exe", "/runtime/bin/wine",
+	} {
+		program, err := programFromArguments(executable, nil, syscall.EPERM, "Arknights.exe")
+		if program != "" || !errors.Is(err, syscall.EPERM) {
+			t.Fatalf("unresolved %s: program=%q error=%v", executable, program, err)
+		}
+	}
+	for _, executable := range []string{"/games/Arknights.exe", "/games/Endfield.exe"} {
+		program, err := programFromArguments(executable, nil, syscall.EPERM)
+		if program != executable || err != nil {
+			t.Fatalf("known main executable %s: program=%q error=%v", executable, program, err)
+		}
+	}
+	// Explicit callers can query a helper, but unrelated PE paths remain unknown.
+	program, err := programFromArguments("/games/PCGamePlatform.exe", nil, syscall.EPERM, "PCGamePlatform.exe")
+	if program != "/games/PCGamePlatform.exe" || err != nil {
+		t.Fatalf("known caller executable: program=%q error=%v", program, err)
+	}
+}
 
 func TestCurrentUIDProcessIDs(t *testing.T) {
 	if err := loadNative(); err != nil {

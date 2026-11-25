@@ -139,22 +139,26 @@ func (l *launches) finish(game string, err error) {
 	}
 	l.update(func() {
 		g := l.games[game]
-		g.active = false
-		if errors.Is(err, launch.ErrAlreadyRunning) {
-			if alreadyRunning {
-				g.state.Stage, g.state.Error, g.observed = "running", "", true
-			} else {
-				g.state.Stage, g.state.Error = "failed", fmt.Sprintf("%s正在其他启动器中启动或运行，请稍后重试。%v", launchTitle(game), err)
-			}
-		} else if err != nil {
-			g.state.Stage, g.state.Error = "failed", fmt.Sprintf("%s无法启动或异常退出：%v", launchTitle(game), err)
-		} else if !g.observed {
-			g.state.Stage, g.state.Error = "failed", launchTitle(game)+"在启动过程中退出，请查看日志。"
-		} else {
-			g.state.Stage, g.state.Error = "exited", ""
-		}
+		g.finish(game, alreadyRunning, err)
 		l.publish(game)
 	})
+}
+
+func (g *gameLaunch) finish(game string, alreadyRunning bool, err error) {
+	g.active = false
+	if errors.Is(err, launch.ErrAlreadyRunning) {
+		if alreadyRunning {
+			g.state.Stage, g.state.Error, g.observed = "running", "", true
+		} else {
+			g.state.Stage, g.state.Error = "failed", fmt.Sprintf("%s正在其他启动器中启动或运行，请稍后重试。%v", launchTitle(game), err)
+		}
+	} else if err != nil {
+		g.state.Stage, g.state.Error = "failed", fmt.Sprintf("%s无法启动或异常退出：%v", launchTitle(game), err)
+	} else if !g.observed {
+		g.state.Stage, g.state.Error = "failed", launchTitle(game)+"在启动过程中退出，请查看日志。"
+	} else {
+		g.state.Stage, g.state.Error = "exited", ""
+	}
 }
 
 // Also reattaches presentation after restarting the launcher while the game

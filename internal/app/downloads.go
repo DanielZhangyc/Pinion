@@ -33,6 +33,13 @@ var arknightsChannels = []string{"arknights", "arknights-bilibili"}
 
 func (a *App) OnSelectChannel(fn func(string)) { a.onSelectChannel = fn }
 
+func (a *App) SetChannelSaveError(err error) {
+	a.channelSaveError = ""
+	if err != nil {
+		a.channelSaveError = err.Error()
+	}
+}
+
 // SetArknightsChannel restores a saved channel; unknown values select official.
 func (a *App) SetArknightsChannel(game string) {
 	a.arknightsChannel = 0
@@ -47,10 +54,14 @@ func (a *App) SetArknightsChannel(game string) {
 func (a *App) SelectedGame() string { return a.selectedGame() }
 
 func (a *App) selectedGame() string {
-	if a.page == arknights {
+	switch a.page {
+	case arknights:
 		return arknightsChannels[max(0, min(a.arknightsChannel, len(arknightsChannels)-1))]
+	case endfield:
+		return "endfield"
+	default:
+		return ""
 	}
-	return "endfield"
 }
 
 func (a *App) channelSelector(c *ui.Context) {
@@ -60,6 +71,10 @@ func (a *App) channelSelector(c *ui.Context) {
 				a.onSelectChannel(a.selectedGame())
 			}
 		})
+	if a.channelSaveError != "" {
+		message := ui.Text(c, "渠道选择未保存，重启后可能恢复原选择").FontSize(fontSmall).TextColor(c.Theme().Danger)
+		tooltip(c, message, a.channelSaveError)
+	}
 }
 
 func (a *App) downloadDetails(c *ui.Context) {

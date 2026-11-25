@@ -77,28 +77,30 @@ func LockForUpdate(game download.GameID, downloadRoot string) (*os.File, error) 
 	return lockIdleGame(p, downloadRoot)
 }
 
-// Running reports whether game runs: any process from its directory under
-// downloadRoot, or its executable from an unknown location. Distributions that
-// share an executable do not count each other's installations.
+// Running reports whether the main game executable runs from this distribution
+// or an unknown location. Helpers do not establish a running game, and
+// distributions sharing an executable exclude each other's installations.
 func Running(snapshot gamewatch.Snapshot, game download.GameID, downloadRoot string) (bool, error) {
 	p, err := profile(game)
 	if err != nil {
 		return false, err
 	}
-	return running(snapshot, p, downloadRoot)
+	return running(snapshot, p, resolveDownloadRoot(downloadRoot))
+}
+
+func resolveDownloadRoot(downloadRoot string) string {
+	// Installation records and launched program paths use the resolved root.
+	if filepath.IsAbs(downloadRoot) {
+		if resolved, err := filepath.EvalSymlinks(downloadRoot); err == nil {
+			return resolved
+		}
+	}
+	return downloadRoot
 }
 
 func running(snapshot gamewatch.Snapshot, p gameProfile, downloadRoot string) (bool, error) {
 	if !filepath.IsAbs(downloadRoot) {
 		return snapshot.Running(p.executable)
-	}
-	// Installation records and launched program paths use the resolved root.
-	if resolved, err := filepath.EvalSymlinks(downloadRoot); err == nil {
-		downloadRoot = resolved
-	}
-	inside, insideErr := snapshot.RunningIn(filepath.Join(downloadRoot, string(p.id)))
-	if inside {
-		return true, nil
 	}
 	var others []string
 	for _, game := range games {
@@ -106,11 +108,22 @@ func running(snapshot gamewatch.Snapshot, p gameProfile, downloadRoot string) (b
 			others = append(others, filepath.Join(downloadRoot, string(game)))
 		}
 	}
-	outside, outsideErr := snapshot.RunningOutside(p.executable, others...)
-	if outside {
+	return snapshot.RunningOutside(p.executable, others...)
+}
+
+// busy also protects files used by SDK and browser helpers after the main
+// executable exits. An uncertain scan must keep updates and launches blocked.
+func busy(snapshot gamewatch.Snapshot, p gameProfile, downloadRoot string) (bool, error) {
+	downloadRoot = resolveDownloadRoot(downloadRoot)
+	main, mainErr := running(snapshot, p, downloadRoot)
+	if main || !filepath.IsAbs(downloadRoot) {
+		return main, mainErr
+	}
+	inside, insideErr := snapshot.RunningIn(filepath.Join(downloadRoot, string(p.id)))
+	if inside {
 		return true, nil
 	}
-	return false, errors.Join(insideErr, outsideErr)
+	return false, errors.Join(mainErr, insideErr)
 }
 
 func lockIdleGame(p gameProfile, downloadRoot string) (*os.File, error) {
@@ -125,11 +138,11 @@ func lockIdleGame(p gameProfile, downloadRoot string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s：%w", p.title, err)
 	}
-	busy, err := running(gamewatch.Capture(p.executable), p, downloadRoot)
+	occupied, err := busy(gamewatch.Capture(p.executable), p, downloadRoot)
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("检查游戏进程：%w", err), lock.Close())
 	}
-	if busy {
+	if occupied {
 		return nil, errors.Join(fmt.Errorf("%s：%w", p.title, ErrAlreadyRunning), lock.Close())
 	}
 	return lock, nil

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -234,6 +235,9 @@ func TestOfficialFullInstall(t *testing.T) {
 		t.Skip("set GRYPH_FULL_INSTALL_INTEGRATION=1, GRYPH_FULL_INSTALL_GAME and GRYPH_DOWNLOAD_ROOT for a complete official installation")
 	}
 	game := GameID(os.Getenv("GRYPH_FULL_INSTALL_GAME"))
+	if _, err := distributionFor(game); err != nil {
+		t.Fatal(err)
+	}
 	root := os.Getenv("GRYPH_DOWNLOAD_ROOT")
 	if !filepath.IsAbs(root) {
 		t.Fatal("GRYPH_DOWNLOAD_ROOT must identify a dedicated absolute download directory")
@@ -307,6 +311,45 @@ func TestOfficialFullInstall(t *testing.T) {
 		}
 	}
 	t.Logf("installed %s %s at %s in %s; reopened record verified", game, loaded.Version, loaded.Directory, time.Since(started).Round(time.Second))
+}
+
+func TestFullInstallRejectsUnknownDistributionBeforeWriting(t *testing.T) {
+	for _, game := range []string{"", "arknights-unknown"} {
+		for _, exists := range []bool{false, true} {
+			name := game
+			if name == "" {
+				name = "empty"
+			}
+			if exists {
+				name += "/existing"
+			} else {
+				name += "/missing"
+			}
+			t.Run(name, func(t *testing.T) {
+				root := filepath.Join(t.TempDir(), "acceptance")
+				if exists {
+					if err := os.Mkdir(root, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				// Exercise the real opt-in entry point in a child test process.
+				child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestOfficialFullInstall$")
+				child.Env = append(os.Environ(), "GRYPH_FULL_INSTALL_INTEGRATION=1", "GRYPH_FULL_INSTALL_GAME="+game, "GRYPH_DOWNLOAD_ROOT="+root)
+				output, err := child.CombinedOutput()
+				if err == nil || !strings.Contains(string(output), "unknown game ID") {
+					t.Fatalf("invalid distribution did not fail validation: %v\n%s", err, output)
+				}
+				entries, err := os.ReadDir(root)
+				if exists {
+					if err != nil || len(entries) != 0 {
+						t.Fatalf("invalid distribution changed an empty directory: %v, %v", entries, err)
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("invalid distribution created a directory: %v", err)
+				}
+			})
+		}
+	}
 }
 
 type trafficTransport struct {

@@ -45,6 +45,7 @@ var drawerEase = ui.CubicBezier(.32, .72, 0, 1)
 type App struct {
 	page               page
 	arknightsChannel   int
+	channelSaveError   string
 	onSelectChannel    func(string)
 	artwork            *Artwork
 	collapsed          bool

@@ -219,10 +219,25 @@ func TestDistributionProcessAttribution(t *testing.T) {
 			t.Fatalf("unattributed update check ignored a running Arknights.exe: %v", err)
 		}
 	})
-	t.Run("helper", func(t *testing.T) {
-		start(t, filepath.Join(bilibili, "BLPlatform64", "PCGamePlatform.exe"))
-		expect(t, map[download.GameID]bool{download.Arknights: false, download.ArknightsBilibili: true})
-	})
+	for _, helper := range []string{"PCGamePlatform.exe", "UnityCrashHandler64.exe"} {
+		t.Run(helper, func(t *testing.T) {
+			start(t, filepath.Join(bilibili, "BLPlatform64", helper))
+			expect(t, map[download.GameID]bool{download.Arknights: false, download.ArknightsBilibili: false})
+			if lock, err := LockForUpdate(download.ArknightsBilibili, root); !errors.Is(err, ErrAlreadyRunning) || lock != nil {
+				if lock != nil {
+					lock.Close()
+				}
+				t.Fatalf("Bilibili update ignored its helper: %v", err)
+			}
+			lock, err := LockForUpdate(download.Arknights, root)
+			if err != nil {
+				t.Fatalf("official update blocked by Bilibili helper: %v", err)
+			}
+			if err := lock.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 	t.Run("unknown_location", func(t *testing.T) {
 		start(t, filepath.Join(t.TempDir(), "Arknights.exe"))
 		expect(t, map[download.GameID]bool{download.Arknights: true, download.ArknightsBilibili: true, download.Endfield: false})

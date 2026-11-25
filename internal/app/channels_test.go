@@ -120,4 +120,16 @@ func TestRestoreArknightsChannel(t *testing.T) {
 	if a.SelectedGame() != "endfield" {
 		t.Fatal("a saved Arknights channel changed the Endfield page")
 	}
+	if err := view.Click("设置"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.SelectedGame(); got != "" {
+		t.Fatalf("settings exposed %q as a visible game for download redraws", got)
+	}
+	if err := view.Click("明日方舟"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.SelectedGame(); got != "arknights-bilibili" {
+		t.Fatalf("returning from settings lost the selected channel: %q", got)
+	}
 }
